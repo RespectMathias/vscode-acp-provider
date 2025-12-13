@@ -1,0 +1,143 @@
+{
+  "name": "vscode-acp-client",
+  "displayName": "VS Code ACP Client",
+  "description": "Chat sessions backed by Agent Client Protocol (ACP) agents and CLIs",
+  "version": "0.1.0",
+  "publisher": "org-gap",
+  "repository": {
+    "url": "https://github.com/gayanper/vscode-acp-provider.git"
+  },
+  "engines": {
+    "vscode": "^1.107.0"
+  },
+  "type": "commonjs",
+  "categories": [
+    "AI",
+    "Chat"
+  ],
+  "keywords": [
+    "acp",
+    "agent-client-protocol",
+    "gemini",
+    "chat-sessions",
+    "ai"
+  ],
+  "activationEvents": [
+    "onStartupFinished",
+    "onLanguageModelChat:copilot",
+    "onUri",
+    "onFileSystem:ccreq",
+    "onFileSystem:ccsettings",
+    "onCustomAgentsProvider"
+  ],
+  "main": "./out/extension.js",
+  "enabledApiProposals": [
+    "chatSessionsProvider"
+  ],
+  "contributes": {
+    "chatSessions": [
+      {
+        "name": "acp",
+        "type": "acp",
+        "canDelegate": true,
+        "displayName": "Acp Agent",
+        "description": "Session based on external agent which supports ACP",
+        "icon": "$(hubot)"
+      }
+    ],
+    "commands": [
+      {
+        "command": "vscodeAcpClient.restart",
+        "title": "ACP Client: Restart Chat Sessions"
+      }
+    ],
+    "configuration": {
+      "title": "VS Code ACP Client",
+      "properties": {
+        "acpClient.agents": {
+          "type": "array",
+          "items": {
+            "type": "object",
+            "required": [
+              "id",
+              "command"
+            ],
+            "properties": {
+              "id": {
+                "type": "string",
+                "description": "Unique identifier for the ACP agent"
+              },
+              "title": {
+                "type": "string",
+                "description": "Display label shown in the chat UI"
+              },
+              "command": {
+                "type": "string",
+                "description": "Executable that starts the ACP-compatible CLI"
+              },
+              "args": {
+                "type": "array",
+                "items": {
+                  "type": "string"
+                },
+                "description": "Optional arguments passed to the CLI"
+              },
+              "cwd": {
+                "type": "string",
+                "description": "Working directory for the process"
+              },
+              "env": {
+                "type": "object",
+                "additionalProperties": {
+                  "type": "string"
+                },
+                "description": "Environment variables merged with the VS Code shell"
+              },
+              "enabled": {
+                "type": "boolean",
+                "default": true,
+                "description": "Whether this agent should be surfaced in chat"
+              }
+            }
+          },
+          "description": "List of ACP agents to use with their command and arguments",
+          "defa/ult": [
+            {
+              "id": "cagent",
+              "title": "Cagent",
+              "command": "/opt/homebrew/bin/cagent",
+              "args": [
+                "acp",
+                "/path/to/your/agents/cagent.yaml"
+              ],
+              "enabled": false
+            }
+          ]
+        }
+      }
+    }
+  },
+  "scripts": {
+    "vscode:prepublish": "npm run compile",
+    "compile": "tsc -p ./",
+    "watch": "tsc -watch -p ./",
+    "pretest": "npm run compile",
+    "lint": "npx prettier . --check",
+    "format": "npx prettier . --write",
+    "package": "vsce package",
+    "install-dts": "npx @vscode/dts dev"
+  },
+  "devDependencies": {
+    "@types/node": "^25.0.1",
+    "@types/vscode": "^1.107.0",
+    "@vscode/vsce": "^3.7.1",
+    "esbuild": "^0.27.1",
+    "prettier": "3.7.4",
+    "typescript": "^5.9.3"
+  },
+  "author": "",
+  "license": "MIT",
+  "dependencies": {
+    "@agentclientprotocol/sdk": "^0.11.0"
+  }
+}

@@ -1,0 +1,205 @@
+import {
+  AgentCapabilities,
+  Client,
+  ClientCapabilities,
+  ClientSideConnection,
+  ContentBlock,
+  InitializeResponse,
+  ndJsonStream,
+  NewSessionResponse,
+  PromptResponse,
+  PROTOCOL_VERSION,
+  RequestPermissionRequest,
+  RequestPermissionResponse,
+  SessionNotification,
+} from "@agentclientprotocol/sdk";
+import { ChildProcessWithoutNullStreams, spawn } from "node:child_process";
+import { Readable, Writable } from "node:stream";
+import * as vscode from "vscode";
+import { DisposableBase } from "./disposables";
+import { AcpAgentConfigurationEntry } from "./types";
+
+export interface AcpPermissionHandler {
+  requestPermission(
+    request: RequestPermissionRequest,
+  ): Promise<RequestPermissionResponse>;
+}
+
+const CLIENT_CAPABILITIES: ClientCapabilities = {
+  fs: {
+    readTextFile: true,
+    writeTextFile: true,
+  },
+  terminal: true,
+};
+
+const CLIENT_INFO = {
+  name: "github-copilot-acp-client",
+  version: "1.0.0",
+};
+
+export class AcpClient extends DisposableBase implements Client {
+  private child?: ChildProcessWithoutNullStreams;
+  private connection?: ClientSideConnection;
+  private readyPromise?: Promise<void>;
+  private agentCapabilities?: InitializeResponse;
+  private readonly onSessionUpdateEmitter = this._register(
+    new vscode.EventEmitter<SessionNotification>(),
+  );
+  public readonly onSessionUpdate: vscode.Event<SessionNotification> =
+    this.onSessionUpdateEmitter.event;
+  private readonly onDidStopEmitter = this._register(
+    new vscode.EventEmitter<void>(),
+  );
+  public readonly onDidStop: vscode.Event<void> = this.onDidStopEmitter.event;
+
+  constructor(
+    private readonly agent: AcpAgentConfigurationEntry,
+    private readonly permissionHandler: AcpPermissionHandler,
+    private readonly logChannel: vscode.OutputChannel,
+  ) {
+    super();
+  }
+
+  async ensureReady(): Promise<void> {
+    if (this.readyPromise) {
+      return this.readyPromise;
+    }
+    this.readyPromise = this.createConnection();
+    try {
+      await this.readyPromise;
+    } catch (error) {
+      this.readyPromise = undefined;
+      throw error;
+    }
+  }
+
+  getCapabilities(): AgentCapabilities {
+    return this.agentCapabilities || {};
+  }
+
+  async createSession(cwd: string): Promise<NewSessionResponse> {
+    await this.ensureReady();
+    if (!this.connection) {
+      throw new Error("ACP connection is not ready");
+    }
+    return this.connection.newSession({
+      cwd,
+      mcpServers: [],
+    });
+  }
+
+  async loadSession(sessionId: string, cwd: string): Promise<void> {
+    await this.ensureReady();
+    if (!this.connection) {
+      throw new Error("ACP connection is not ready");
+    }
+    await this.connection.loadSession({
+      sessionId,
+      cwd,
+      mcpServers: [],
+    });
+  }
+
+  async prompt(
+    sessionId: string,
+    prompt: ContentBlock[],
+  ): Promise<PromptResponse> {
+    await this.ensureReady();
+    if (!this.connection) {
+      throw new Error("ACP connection is not ready");
+    }
+    return this.connection.prompt({
+      sessionId,
+      prompt,
+    });
+  }
+
+  async cancel(sessionId: string): Promise<void> {
+    if (!this.connection) {
+      return;
+    }
+    try {
+      await this.connection.cancel({
+        sessionId,
+        requestId: "",
+      });
+    } catch (error) {
+      this.logChannel.appendLine(
+        `[acp:${this.agent.id}] failed to cancel session ${sessionId}: ${error instanceof Error ? error.message : String(error)}`,
+      );
+    }
+  }
+
+  requestPermission(
+    request: RequestPermissionRequest,
+  ): Promise<RequestPermissionResponse> {
+    return this.permissionHandler.requestPermission(request);
+  }
+
+  async sessionUpdate(notification: SessionNotification): Promise<void> {
+    this.onSessionUpdateEmitter.fire(notification);
+  }
+
+  dispose(): void {
+    this.stopProcess();
+    super.dispose();
+  }
+
+  private async createConnection(): Promise<void> {
+    this.stopProcess();
+    const args = Array.from(this.agent.args ?? []);
+    const child = spawn(this.agent.command, args, {
+      cwd: this.agent.cwd ?? process.cwd(),
+      env: {
+        ...process.env,
+        ...this.agent.env,
+      },
+      stdio: ["pipe", "pipe", "pipe"],
+    });
+    this.child = child;
+    child.stderr?.on("data", (data) => {
+      this.logChannel.appendLine(
+        `[acp:${this.agent.id}] ${data.toString().trim()}`,
+      );
+    });
+    child.on("exit", (code) => {
+      this.logChannel.appendLine(
+        `[acp:${this.agent.id}] exited with code ${code ?? "unknown"}`,
+      );
+      this.stopProcess();
+      this.onDidStopEmitter.fire();
+    });
+    child.on("error", (error) => {
+      this.logChannel.appendLine(
+        `[acp:${this.agent.id}] failed to start: ${error instanceof Error ? error.message : String(error)}`,
+      );
+    });
+
+    const stdinStream = child.stdin ? Writable.toWeb(child.stdin) : undefined;
+    const stdoutStream = child.stdout
+      ? Readable.toWeb(child.stdout)
+      : undefined;
+    if (!stdinStream || !stdoutStream) {
+      throw new Error("Failed to connect ACP client streams");
+    }
+    const stream = ndJsonStream(stdinStream, stdoutStream);
+    this.connection = new ClientSideConnection(() => this, stream);
+
+    const initResponse = await this.connection.initialize({
+      protocolVersion: PROTOCOL_VERSION,
+      clientCapabilities: CLIENT_CAPABILITIES,
+      clientInfo: CLIENT_INFO,
+    });
+    this.agentCapabilities = initResponse.agentCapabilities;
+  }
+
+  private stopProcess(): void {
+    if (this.child && !this.child.killed) {
+      this.child.kill();
+    }
+    this.child = undefined;
+    this.connection = undefined;
+    this.readyPromise = undefined;
+  }
+}
