@@ -20,6 +20,5 @@ export function getAgentIdFromResource(
   if (resource.authority) {
     return resource.authority;
   }
-  const normalizedPath = resource.path.replace(/^\/+/, "");
-  return normalizedPath || undefined;
+  return undefined;
 }

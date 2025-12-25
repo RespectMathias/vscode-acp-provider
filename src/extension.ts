@@ -51,6 +51,7 @@ export async function activate(context: vscode.ExtensionContext) {
   const participant = (chatParticipant = new AcpChatParticipant(
     manager,
     permissionPrompts,
+    outputChannel,
   ));
   const sessionContentProvider = (contentProvider =
     new AcpChatSessionContentProvider({
@@ -58,6 +59,11 @@ export async function activate(context: vscode.ExtensionContext) {
       agentRegistry: registry,
     }));
   context.subscriptions.push(participant, sessionContentProvider);
+
+  // Wire item provider into content provider so untitled sessions can be committed
+  // to a proper agent-based resource after the UI opens the placeholder.
+  sessionContentProvider.attachItemProvider(itemProvider);
+
   context.subscriptions.push(
     vscode.chat.registerChatSessionContentProvider(
       ACP_CHAT_SCHEME,

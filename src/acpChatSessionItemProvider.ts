@@ -74,7 +74,13 @@ export class AcpChatSessionItemProvider
     return this.createSessionItem(selection.agent);
   }
 
-  private createSessionItem(agent: AgentRegistryEntry): vscode.ChatSessionItem {
+  createSessionItem(agent: AgentRegistryEntry): vscode.ChatSessionItem {
+    // public helper so external code (extension) can create a compatible item
+    // with the same shape as provideChatSessionItems returned items.
+
+    // public helper so external code (extension) can create a compatible item
+    // with the same shape as provideChatSessionItems returned items.
+
     const resource = createChatSessionUri(agent.id);
     const iconPath = agent.icon ? new vscode.ThemeIcon(agent.icon) : undefined;
     return {
@@ -84,5 +90,17 @@ export class AcpChatSessionItemProvider
       iconPath,
       status: vscode.ChatSessionStatus.Completed,
     } satisfies vscode.ChatSessionItem;
+  }
+
+  /**
+   * Request that the UI replace an original (untitled) chat session item with a modified one.
+   * The extension can call this after creating any necessary session state so the UI will
+   * re-resolve content against the final resource.
+   */
+  commitReplacement(
+    original: vscode.ChatSessionItem,
+    modified: vscode.ChatSessionItem,
+  ): void {
+    this.onDidCommitChatSessionItemEmitter.fire({ original, modified });
   }
 }

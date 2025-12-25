@@ -12,6 +12,7 @@ export class AcpChatParticipant extends DisposableBase {
   constructor(
     private readonly sessionManager: SessionManager,
     private readonly permissionManager: PermissionPromptManager,
+    private readonly outputChannel: vscode.OutputChannel,
   ) {
     super();
     this.participant = vscode.chat.createChatParticipant(
@@ -30,17 +31,15 @@ export class AcpChatParticipant extends DisposableBase {
     const sessionResource =
       context.chatSessionContext?.chatSessionItem.resource;
     if (!sessionResource) {
+      // Info-style message in chat UI
       response.markdown(
-        "ACP requests must be made from within an ACP chat session.",
+        "> ℹ️ **Info:** ACP requests must be made from within an ACP chat session.",
       );
       return;
     }
 
-    // Defensive lookup: sometimes VS Code passes a resource-like plain object.
-    let sessionState = this.sessionManager.get(sessionResource);
-    if (!sessionState && (this.sessionManager as any).getByKey) {
-      sessionState = (this.sessionManager as any).getByKey(sessionResource);
-    }
+    // Defensive lookup: accept Uri or resource-like objects by using getByKey.
+    let sessionState = this.sessionManager.getByKey(sessionResource);
     if (!sessionState) {
       // Log minimal diagnostics to help debugging when resources don't match
       console.warn(
@@ -48,7 +47,10 @@ export class AcpChatParticipant extends DisposableBase {
         sessionResource,
         typeof sessionResource,
       );
-      response.markdown("ACP session is not initialized yet.");
+      // Error-style message in chat UI (keep actionable error visible)
+      response.markdown(
+        "> **Error:** ACP session is not initialized yet. Open or create an ACP session to continue.",
+      );
       return;
     }
 
@@ -96,7 +98,10 @@ export class AcpChatParticipant extends DisposableBase {
 
       const promptBlocks = this.buildPromptBlocks(request, context);
       if (promptBlocks.length === 0) {
-        response.markdown("Prompt cannot be empty.");
+        // Informational guidance in chat
+        response.markdown(
+          "> ℹ️ **Info:** Prompt cannot be empty. Please provide a question or instruction for the ACP agent.",
+        );
         sessionState.status = "idle";
         return;
       }
@@ -110,8 +115,9 @@ export class AcpChatParticipant extends DisposableBase {
       }
 
       sessionState.status = "idle";
-      response.markdown(
-        `ACP agent finished with stop reason: ${result.stopReason}.`,
+      // Log detailed stop reason to the ACP Output channel for troubleshooting.
+      this.outputChannel.appendLine(
+        `[debug] ACP agent finished with stop reason: ${result.stopReason}`,
       );
     } catch (error) {
       if (token.isCancellationRequested) {
@@ -120,7 +126,8 @@ export class AcpChatParticipant extends DisposableBase {
       sessionState.status = "error";
       const message =
         error instanceof Error ? error.message : String(error ?? "Unknown");
-      response.markdown(`ACP request failed: ${message}`);
+      // Render a Copilot-style error message in chat
+      response.markdown(`> **Error:** ACP request failed. ${message}`);
     } finally {
       sessionState.pendingRequest?.permissionContext?.dispose();
       sessionState.pendingRequest = undefined;
@@ -399,9 +406,16 @@ ${lines.join("\n")}`
       case "agent_message_chunk": {
         const text = this.getContentText(update.content);
         if (text) {
+          // Render agent text output as normal
           response.markdown(text);
         } else {
-          response.markdown("Received non-text message chunk.");
+          // Non-text chunk: render a brief notice in chat and log details to output channel
+          response.markdown(
+            "> ℹ️ **Info:** Received a non-text message from the agent that cannot be rendered.",
+          );
+          this.outputChannel.appendLine(
+            `[debug] Received non-text message chunk (non-renderable) from agent.`,
+          );
         }
         break;
       }
