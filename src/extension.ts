@@ -1,86 +1,110 @@
 /// <reference path="../vscode.proposed.chatSessionsProvider.d.ts" />
 import * as vscode from "vscode";
-import {
-  ACP_SESSION_SCHEME,
-  AcpAgentConfigurationService,
-  AcpClientManager,
-  AcpSessionStore,
-} from "./acpServices";
-import {
-  ACP_SESSION_TYPE,
-  AcpChatSessionParticipant,
-} from "./acpChatSessionParticipant";
-import { AcpChatSessionContentProvider } from "./acpChatSessionContentProvider";
+import { AcpPermissionHandler } from "./acpClient";
+import { AgentRegistry } from "./agentRegistry";
+import { SessionManager } from "./sessionManager";
 import { AcpChatSessionItemProvider } from "./acpChatSessionItemProvider";
+import { ACP_CHAT_SCHEME, ACP_CHAT_SESSION_TYPE } from "./chatIdentifiers";
+import { AcpChatSessionContentProvider } from "./acpChatSessionContentProvider";
+import { AcpChatParticipant } from "./acpChatParticipant";
+import {
+  PermissionPromptManager,
+  RESOLVE_PERMISSION_COMMAND,
+} from "./permissionPrompts";
+
+let agentRegistry: AgentRegistry | undefined;
+let sessionManager: SessionManager | undefined;
+let permissionHandler: AcpPermissionHandler;
+let permissionPrompts: PermissionPromptManager | undefined;
+let resolvePermissionCommand: vscode.Disposable | undefined;
+let contentProvider: AcpChatSessionContentProvider | undefined;
+let chatParticipant: AcpChatParticipant | undefined;
 
 export async function activate(context: vscode.ExtensionContext) {
   const outputChannel = vscode.window.createOutputChannel("ACP Client");
   context.subscriptions.push(outputChannel);
 
-  const agentConfiguration = new AcpAgentConfigurationService((removedIds) => {
-    void sessionStore.cleanupRemovedAgents(removedIds);
+  permissionPrompts = new PermissionPromptManager();
+  context.subscriptions.push(permissionPrompts);
+
+  permissionHandler = permissionPrompts;
+
+  const registry = (agentRegistry = new AgentRegistry());
+  const manager = (sessionManager = new SessionManager(
+    outputChannel,
+    permissionHandler,
+    permissionPrompts,
+  ));
+  context.subscriptions.push(registry, manager);
+
+  const itemProvider = new AcpChatSessionItemProvider({
+    agentRegistry: registry,
   });
-  const clientManager = new AcpClientManager(agentConfiguration, outputChannel);
-  const sessionStore = new AcpSessionStore(
-    context,
-    agentConfiguration,
-    clientManager,
-    outputChannel,
-  );
-  const itemProvider = new AcpChatSessionItemProvider(sessionStore);
-  const contentProvider = new AcpChatSessionContentProvider(
-    sessionStore,
-    agentConfiguration,
-  );
-  const participant = new AcpChatSessionParticipant(
-    sessionStore,
-    itemProvider,
-    contentProvider,
-    agentConfiguration,
-    outputChannel,
-  );
-
+  context.subscriptions.push(itemProvider);
   context.subscriptions.push(
-    agentConfiguration,
-    clientManager,
-    sessionStore,
-    itemProvider,
-    contentProvider,
-    participant,
-  );
-
-  // Restore persisted sessions from workspace storage
-  await sessionStore.restoreSessions();
-
-  const participantHandler = participant.createHandler();
-  contentProvider.setRequestHandler(participantHandler);
-  const chatParticipant = vscode.chat.createChatParticipant(
-    ACP_SESSION_TYPE,
-    participantHandler,
-  );
-
-  context.subscriptions.push(
-    vscode.chat.registerChatSessionItemProvider(ACP_SESSION_TYPE, itemProvider),
-  );
-  context.subscriptions.push(
-    vscode.chat.registerChatSessionContentProvider(
-      ACP_SESSION_SCHEME,
-      contentProvider,
-      chatParticipant,
+    vscode.chat.registerChatSessionItemProvider(
+      ACP_CHAT_SESSION_TYPE,
+      itemProvider,
     ),
   );
+
+  const participant = (chatParticipant = new AcpChatParticipant(
+    manager,
+    permissionPrompts,
+  ));
+  const sessionContentProvider = (contentProvider =
+    new AcpChatSessionContentProvider({
+      sessionManager: manager,
+      agentRegistry: registry,
+    }));
+  context.subscriptions.push(participant, sessionContentProvider);
+  context.subscriptions.push(
+    vscode.chat.registerChatSessionContentProvider(
+      ACP_CHAT_SCHEME,
+      sessionContentProvider,
+      participant.participant,
+    ),
+  );
+
+  resolvePermissionCommand = vscode.commands.registerCommand(
+    RESOLVE_PERMISSION_COMMAND,
+    (payload) => {
+      permissionPrompts?.resolveFromCommand(payload);
+    },
+  );
+  context.subscriptions.push(resolvePermissionCommand);
 
   const restartCommand = vscode.commands.registerCommand(
     "vscodeAcpClient.restart",
     async () => {
-      await clientManager.reset();
-      sessionStore.clear();
-      vscode.window.showInformationMessage("ACP chat clients restarted");
+      disposeAllSessions();
+      vscode.window.showInformationMessage(
+        "ACP chat sessions restarted. Open a session to reconnect.",
+      );
     },
   );
   context.subscriptions.push(restartCommand);
+
+  context.subscriptions.push(
+    registry.onDidChange(() => {
+      disposeAllSessions();
+    }),
+  );
+
+  context.subscriptions.push(
+    new vscode.Disposable(() => {
+      disposeAllSessions();
+    }),
+  );
 }
 
 export function deactivate(): void {
-  // Resources are disposed via the extension context subscriptions.
+  disposeAllSessions();
+}
+
+function disposeAllSessions(): void {
+  resolvePermissionCommand?.dispose();
+  resolvePermissionCommand = undefined;
+  contentProvider?.reset();
+  sessionManager?.disposeAll();
 }

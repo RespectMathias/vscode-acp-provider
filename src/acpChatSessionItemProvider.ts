@@ -1,67 +1,88 @@
 import * as vscode from "vscode";
-import {
-  AcpSessionStore,
-  AcpSessionRecord,
-  toSessionResource,
-} from "./acpServices";
 import { DisposableBase } from "./disposables";
+import { AgentRegistry, AgentRegistryEntry } from "./agentRegistry";
+import { createChatSessionUri } from "./chatIdentifiers";
+
+export interface AcpChatSessionItemProviderOptions {
+  readonly agentRegistry: AgentRegistry;
+  readonly onDidRequestOpenSession?: (agent: AgentRegistryEntry) => void;
+}
 
 export class AcpChatSessionItemProvider
   extends DisposableBase
   implements vscode.ChatSessionItemProvider
 {
-  private readonly onDidChangeEmitter = this._register(
+  private readonly onDidChangeChatSessionItemsEmitter = this._register(
     new vscode.EventEmitter<void>(),
   );
-  public readonly onDidChangeChatSessionItems: vscode.Event<void> =
-    this.onDidChangeEmitter.event;
-  private readonly onDidCommitEmitter = this._register(
+  readonly onDidChangeChatSessionItems =
+    this.onDidChangeChatSessionItemsEmitter.event;
+
+  private readonly onDidCommitChatSessionItemEmitter = this._register(
     new vscode.EventEmitter<{
       original: vscode.ChatSessionItem;
       modified: vscode.ChatSessionItem;
     }>(),
   );
-  public readonly onDidCommitChatSessionItem = this.onDidCommitEmitter.event;
+  readonly onDidCommitChatSessionItem =
+    this.onDidCommitChatSessionItemEmitter.event;
 
-  constructor(private readonly sessionStore: AcpSessionStore) {
+  constructor(private readonly options: AcpChatSessionItemProviderOptions) {
     super();
     this._register(
-      this.sessionStore.onDidChangeSessions(() => this.notifySessionsChange()),
+      this.options.agentRegistry.onDidChange(() => {
+        this.onDidChangeChatSessionItemsEmitter.fire();
+      }),
     );
   }
 
-  notifySessionsChange(): void {
-    this.onDidChangeEmitter.fire();
+  provideChatSessionItems(): vscode.ChatSessionItem[] {
+    return this.options.agentRegistry
+      .list()
+      .map((agent) => this.createSessionItem(agent));
   }
 
-  swap(
-    original: vscode.ChatSessionItem,
-    modified: vscode.ChatSessionItem,
-  ): void {
-    this.onDidCommitEmitter.fire({ original, modified });
-  }
-
-  async provideChatSessionItems(
-    _token: vscode.CancellationToken,
-  ): Promise<vscode.ChatSessionItem[]> {
-    const sessions = await this.sessionStore.listSessions();
-    return sessions.map((session) => this.toItem(session));
-  }
-
-  private toItem(session: AcpSessionRecord): vscode.ChatSessionItem {
-    const item: vscode.ChatSessionItem = {
-      resource: toSessionResource(session.id),
-      label: session.label,
-      timing: {
-        startTime: session.createdAt,
-        endTime: session.status === "completed" ? session.updatedAt : undefined,
-      },
-    };
-    if (session.status === "completed") {
-      item.status = vscode.ChatSessionStatus.Completed;
-    } else if (session.status === "running") {
-      item.status = vscode.ChatSessionStatus.InProgress;
+  // Support delegated session creation. This optional hook is used by VS Code when a
+  // delegated provider (contributed with "canDelegate": true) is asked to create
+  // a new session. We present a quick pick of available agents and return the selected item.
+  async provideNewChatSessionItem(
+    options: { readonly request: vscode.ChatRequest; metadata?: any },
+    token: vscode.CancellationToken,
+  ): Promise<vscode.ChatSessionItem | undefined> {
+    const agents = this.options.agentRegistry
+      .list()
+      .filter((a) => a.enabled !== false);
+    if (!agents.length) {
+      return undefined;
     }
-    return item;
+
+    const picks = agents.map((a) => ({
+      label: a.label,
+      description: a.description,
+      agent: a,
+    }));
+
+    const selection = await vscode.window.showQuickPick(picks, {
+      placeHolder: "Select an ACP agent to start a new session",
+      ignoreFocusOut: true,
+    });
+
+    if (!selection || token.isCancellationRequested) {
+      return undefined;
+    }
+
+    return this.createSessionItem(selection.agent);
+  }
+
+  private createSessionItem(agent: AgentRegistryEntry): vscode.ChatSessionItem {
+    const resource = createChatSessionUri(agent.id);
+    const iconPath = agent.icon ? new vscode.ThemeIcon(agent.icon) : undefined;
+    return {
+      resource,
+      label: agent.label,
+      description: agent.description,
+      iconPath,
+      status: vscode.ChatSessionStatus.Completed,
+    } satisfies vscode.ChatSessionItem;
   }
 }
