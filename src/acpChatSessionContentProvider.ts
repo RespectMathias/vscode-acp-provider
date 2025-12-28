@@ -1,25 +1,9 @@
 import * as vscode from "vscode";
 import { Uri } from "vscode";
 import { AcpChatParticipant } from "./acpChatParticipant";
-import { AcpClient, AcpPermissionHandler } from "./acpClient";
-import { AgentRegistryEntry } from "./agentRegistry";
-import { createSessionType, getAgentIdFromResource } from "./chatIdentifiers";
+import { AcpSessionManager, Session } from "./acpSessionManager";
 import { DisposableBase } from "./disposables";
-import { PermissionPromptManager } from "./permissionPrompts";
-import { getWorkspaceCwd } from "./permittedPaths";
-import { createSessionState, SessionState } from "./sessionState";
 import { VscodeSessionOptions } from "./types";
-
-type AcpChatSessionContentProviderOptions = {
-  readonly agent: AgentRegistryEntry;
-  readonly logChannel: vscode.OutputChannel;
-  readonly participant: AcpChatParticipant;
-};
-
-type ActiveSessionContext = {
-  readonly session: vscode.ChatSession;
-  readonly state: SessionState | null;
-};
 
 const EMPTY_CHAT_OPTIONS: Record<string, vscode.ChatSessionProviderOptionItem> =
   {
@@ -37,12 +21,12 @@ export class AcpChatSessionContentProvider
   extends DisposableBase
   implements vscode.ChatSessionContentProvider, vscode.ChatSessionItemProvider
 {
-  private current: SessionState | null = null;
-  private permissionHander: AcpPermissionHandler;
-
-  constructor(private readonly options: AcpChatSessionContentProviderOptions) {
+  constructor(
+    private readonly sessionManager: AcpSessionManager,
+    private readonly participant: AcpChatParticipant,
+    private readonly logChannel: vscode.LogOutputChannel,
+  ) {
     super();
-    this.permissionHander = new PermissionPromptManager();
   }
 
   // start event definitions --------------------------------------------------
@@ -86,26 +70,21 @@ export class AcpChatSessionContentProvider
     resource: vscode.Uri,
     _token: vscode.CancellationToken,
   ): Promise<vscode.ChatSession> {
-    const key = resource.toString();
-    const agentId = getAgentIdFromResource(resource);
-    if (!agentId) {
-      throw new Error(
-        `No ACP agent associated with resource ${resource.toString()}`,
-      );
-    }
 
-    const agent = this.options.agent;
-    this.createSessionState(agent, resource).then((state) => {
+    this.sessionManager.create(resource).then((session) => {
+      this.participant.init(session);
+
+      this.logChannel.debug(`firing option change for resource ${resource.toString()}`);
       this._onDidChangeChatSessionOptions.fire({
         resource,
         updates: [
           {
             optionId: VscodeSessionOptions.Mode,
-            value: state.options.defaultMode,
+            value: session.defaultChatOptions.modeId,
           },
           {
             optionId: VscodeSessionOptions.Model,
-            value: state.options.defaultModel,
+            value: session.defaultChatOptions.modelId,
           },
         ],
       });
@@ -119,56 +98,14 @@ export class AcpChatSessionContentProvider
     return session;
   }
 
-  async createSessionState(
-    agent: AgentRegistryEntry,
-    vscodeResource: vscode.Uri,
-  ): Promise<SessionState> {
-    if (this.current) {
-      return this.current;
-    }
-
-    const key = vscodeResource.toString();
-    const client = new AcpClient(
-      agent,
-      this.permissionHander,
-      this.options.logChannel,
-    );
-    const cwd = getWorkspaceCwd();
-    const result = await client.createSession(cwd);
-    const sessionId = result.sessionId;
-
-    const state = createSessionState(
-      agent,
-      vscodeResource,
-      client,
-      sessionId,
-      result.modes?.currentModeId || "",
-      result.models?.currentModelId || "",
-    );
-    this.options.participant.init(state);
-    this.current = state;
-    return state;
-  }
-
   // Currently in 1.108.0-insider this api is only called once when the provider is registered.
   // so we create a session and use the information from that. The same session will be used later for first providing content api call.
   async provideChatSessionProviderOptions(): Promise<vscode.ChatSessionProviderOptions> {
-    const session = this.current;
-    if (!session) {
-      return new Promise(async (resolve) => {
-        const sessionState = await this.createSessionState(
-          this.options.agent,
-          vscode.Uri.parse(`${createSessionType(this.options.agent.id)}://`),
-        );
-        resolve(this.buildOptionsGroup(sessionState));
-      });
-    } else {
-      return this.buildOptionsGroup(session);
-    }
+    return this.sessionManager.getDefault().then((session) => this.buildOptionsGroup(session));
   }
 
   private buildOptionsGroup(
-    session: SessionState,
+    session: Session,
   ): vscode.ChatSessionProviderOptions {
     const responseOptions: vscode.ChatSessionProviderOptions = {
       optionGroups: [],
@@ -214,18 +151,25 @@ export class AcpChatSessionContentProvider
     updates: ReadonlyArray<vscode.ChatSessionOptionUpdate>,
     token: vscode.CancellationToken,
   ): Promise<void> {
-    if(!this.current) {
-      this.options.logChannel.appendLine("[warn] Session state not initialized yet to handle provideHandleOptionsChange");
+    const session = await this.sessionManager.get(resource);
+    if (!session) {
+      this.logChannel.warn(`No session found to handle provideHandleOptionsChange for ${resource.toString()}`);
       return;
     }
 
     updates.forEach((update) => {
       if (update.optionId === VscodeSessionOptions.Mode && update.value) {
-        this.current?.client.changeMode(this.current.acpSessionId, update.value);
+        session.client.changeMode(
+          session.acpSessionId,
+          update.value,
+        );
       }
 
       if (update.optionId === VscodeSessionOptions.Model && update.value) {
-        this.current?.client.changeModel(this.current.acpSessionId, update.value);
+        session.client.changeModel(
+          session.acpSessionId,
+          update.value,
+        );
       }
     });
   }

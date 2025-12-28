@@ -73,12 +73,6 @@
         "when": "config.acpClient.agents.geminicli.enabled"
       }
     ],
-    "commands": [
-      {
-        "command": "vscodeAcpClient.restart",
-        "title": "ACP Client: Restart Chat Sessions"
-      }
-    ],
     "configuration": {
       "title": "VS Code ACP Client",
       "properties": {

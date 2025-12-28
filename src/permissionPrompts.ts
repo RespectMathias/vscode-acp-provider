@@ -5,10 +5,8 @@ import {
 } from "@agentclientprotocol/sdk";
 import * as vscode from "vscode";
 import { AcpPermissionHandler } from "./acpClient";
+import { Session } from "./acpSessionManager";
 import { DisposableBase } from "./disposables";
-import { SessionState } from "./sessionState";
-
-export const RESOLVE_PERMISSION_COMMAND = "vscodeAcpClient.permission.resolve";
 
 export interface PermissionResolutionPayload {
   readonly promptId: string;
@@ -17,7 +15,7 @@ export interface PermissionResolutionPayload {
 }
 
 export interface PermissionPromptContext {
-  readonly sessionState: SessionState;
+  readonly session: Session;
   readonly response: vscode.ChatResponseStream;
   readonly token?: vscode.CancellationToken;
 }
@@ -26,6 +24,7 @@ interface SessionChatContext {
   readonly sessionId: string;
   readonly response: vscode.ChatResponseStream;
   readonly agentLabel: string;
+  readonly agentId: string;
   readonly token?: vscode.CancellationToken;
 }
 
@@ -40,6 +39,10 @@ interface PendingPrompt {
   cancellationListener?: vscode.Disposable;
 }
 
+export function createPermissionResolveCommandId(agentId: string): string {
+  return `acpClient.resolvePermission.${agentId}`;
+}
+
 export class PermissionPromptManager
   extends DisposableBase
   implements AcpPermissionHandler
@@ -48,7 +51,7 @@ export class PermissionPromptManager
   private pendingPrompt: PendingPrompt | null = null;
 
   bindSessionResponse(context: PermissionPromptContext): vscode.Disposable {
-    const sessionId = context.sessionState.acpSessionId;
+    const sessionId = context.session.acpSessionId;
     if (!sessionId) {
       return new vscode.Disposable(() => {
         /* noop */
@@ -60,7 +63,8 @@ export class PermissionPromptManager
     const chatContext: SessionChatContext = {
       sessionId,
       response: context.response,
-      agentLabel: context.sessionState.agent.label,
+      agentLabel: context.session.agent.label,
+      agentId: context.session.agent.id,
       token: context.token,
     };
 
@@ -186,10 +190,11 @@ export class PermissionPromptManager
     context.response.markdown(lines.join("\n"));
     context.response.progress("Awaiting your decision...");
 
+    const commandId = createPermissionResolveCommandId(context.agentId);
     for (const option of pending.request.options) {
       context.response.button({
         title: this.optionLabel(option),
-        command: RESOLVE_PERMISSION_COMMAND,
+        command: commandId,
         arguments: [
           {
             promptId: pending.promptId,
@@ -202,7 +207,7 @@ export class PermissionPromptManager
 
     context.response.button({
       title: "Deny",
-      command: RESOLVE_PERMISSION_COMMAND,
+      command: commandId,
       arguments: [
         {
           promptId: pending.promptId,

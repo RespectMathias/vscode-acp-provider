@@ -1,11 +1,12 @@
 import { ContentBlock, SessionNotification } from "@agentclientprotocol/sdk";
 import * as vscode from "vscode";
+import { Session } from "./acpSessionManager";
 import { DisposableBase } from "./disposables";
 import { PermissionPromptManager } from "./permissionPrompts";
 import { SessionState } from "./sessionState";
 
 export class AcpChatParticipant extends DisposableBase {
-  private sessionState: SessionState | null = null;
+  private session: Session | null = null;
 
   requestHandler: vscode.ChatRequestHandler = this.handleRequest.bind(this);
   onDidReceiveFeedback: vscode.Event<vscode.ChatResultFeedback> =
@@ -19,8 +20,8 @@ export class AcpChatParticipant extends DisposableBase {
     super();
   }
 
-  init(sessionState: SessionState): void {
-    this.sessionState = sessionState;
+  init(session: Session): void {
+    this.session = session;
   }
 
   createHandler(): vscode.ChatRequestHandler {
@@ -44,8 +45,8 @@ export class AcpChatParticipant extends DisposableBase {
     }
 
     // Defensive lookup: accept Uri or resource-like objects by using getByKey.
-    const sessionState = this.sessionState;
-    if (!sessionState) {
+    const session = this.session;
+    if (!session) {
       // Log minimal diagnostics to help debugging when resources don't match
       console.warn(
         "[acp] No chat session found for resource:",
@@ -63,18 +64,18 @@ export class AcpChatParticipant extends DisposableBase {
       return;
     }
 
-    sessionState.status = "running";
+    session.status = "running";
     response.progress("Connecting to ACP agent...");
 
-    this.cancelPendingRequest(sessionState);
+    this.cancelPendingRequest(session);
 
     const cancellation = new vscode.CancellationTokenSource();
-    sessionState.pendingRequest = { cancellation };
+    session.pendingRequest = { cancellation };
 
-    const subscription = sessionState.client.onSessionUpdate((notification) => {
+    const subscription = session.client.onSessionUpdate((notification) => {
       if (
-        !sessionState.acpSessionId ||
-        notification.sessionId !== sessionState.acpSessionId
+        !session.acpSessionId ||
+        notification.sessionId !== session.acpSessionId
       ) {
         return;
       }
@@ -86,20 +87,20 @@ export class AcpChatParticipant extends DisposableBase {
 
     const cancellationRegistration = token.onCancellationRequested(() => {
       cancellation.cancel();
-      if (sessionState.acpSessionId) {
-        sessionState.client.cancel(sessionState.acpSessionId).catch(() => {
+      if (session.acpSessionId) {
+        session.client.cancel(session.acpSessionId).catch(() => {
           /* noop */
         });
       }
-      const pending = sessionState.pendingRequest;
+      const pending = session.pendingRequest;
       if (pending?.cancellation === cancellation) {
         pending.permissionContext?.dispose();
       }
     });
 
     try {
-      const sessionId = sessionState.acpSessionId;
-      this.refreshPermissionContext(sessionState, response, token);
+      const sessionId = session.acpSessionId;
+      this.refreshPermissionContext(session, response, token);
 
       const promptBlocks = this.buildPromptBlocks(request, context);
       if (promptBlocks.length === 0) {
@@ -107,19 +108,19 @@ export class AcpChatParticipant extends DisposableBase {
         response.markdown(
           "> ℹ️ **Info:** Prompt cannot be empty. Please provide a question or instruction for the ACP agent.",
         );
-        sessionState.status = "idle";
+        session.status = "idle";
         return;
       }
       if (token.isCancellationRequested) {
         return;
       }
 
-      const result = await sessionState.client.prompt(sessionId, promptBlocks);
+      const result = await session.client.prompt(sessionId, promptBlocks);
       if (token.isCancellationRequested) {
         return;
       }
 
-      sessionState.status = "idle";
+      session.status = "idle";
       // Log detailed stop reason to the ACP Output channel for troubleshooting.
       this.outputChannel.appendLine(
         `[debug] ACP agent finished with stop reason: ${result.stopReason}`,
@@ -128,14 +129,14 @@ export class AcpChatParticipant extends DisposableBase {
       if (token.isCancellationRequested) {
         return;
       }
-      sessionState.status = "error";
+      session.status = "error";
       const message =
         error instanceof Error ? error.message : String(error ?? "Unknown");
       // Render a Copilot-style error message in chat
       response.markdown(`> **Error:** ACP request failed. ${message}`);
     } finally {
-      sessionState.pendingRequest?.permissionContext?.dispose();
-      sessionState.pendingRequest = undefined;
+      session.pendingRequest?.permissionContext?.dispose();
+      session.pendingRequest = undefined;
       cancellationRegistration.dispose();
       subscription.dispose();
     }
@@ -457,18 +458,18 @@ ${lines.join("\n")}`
     }
   }
 
-  private cancelPendingRequest(state: SessionState): void {
-    const pending = state.pendingRequest;
+  private cancelPendingRequest(session: Session): void {
+    const pending = session.pendingRequest;
     if (!pending) {
       return;
     }
     pending.cancellation.cancel();
     pending.permissionContext?.dispose();
-    state.pendingRequest = undefined;
+    session.pendingRequest = undefined;
   }
 
   private refreshPermissionContext(
-    sessionState: SessionState,
+    sessionState: Session,
     response: vscode.ChatResponseStream,
     token: vscode.CancellationToken,
   ): void {
@@ -489,12 +490,12 @@ ${lines.join("\n")}`
   }
 
   private bindPermissionContext(
-    sessionState: SessionState,
+    sessionState: Session,
     response: vscode.ChatResponseStream,
     token: vscode.CancellationToken,
   ): vscode.Disposable {
     return this.permissionManager.bindSessionResponse({
-      sessionState,
+      session: sessionState,
       response,
       token,
     });

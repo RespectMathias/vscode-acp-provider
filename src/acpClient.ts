@@ -6,6 +6,7 @@ import {
   ContentBlock,
   InitializeResponse,
   ndJsonStream,
+  NewSessionRequest,
   NewSessionResponse,
   PromptResponse,
   PROTOCOL_VERSION,
@@ -91,10 +92,11 @@ export class AcpClient extends DisposableBase implements Client {
     if (!this.connection) {
       throw new Error("ACP connection is not ready");
     }
-    const response: NewSessionResponse = await this.connection.newSession({
+    const request: NewSessionRequest = {
       cwd,
       mcpServers: [],
-    });
+    };
+    const response: NewSessionResponse = await this.connection.newSession(request);
     this.supportedModeState = response.modes || null;
     this.supportedModelState = response.models || null;
 
