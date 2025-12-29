@@ -5,6 +5,7 @@ import {
   ClientSideConnection,
   ContentBlock,
   InitializeResponse,
+  LoadSessionResponse,
   ndJsonStream,
   NewSessionRequest,
   NewSessionResponse,
@@ -18,6 +19,7 @@ import {
   SessionNotification,
   SetSessionModelRequest,
   SetSessionModeRequest,
+  ToolCall,
 } from "@agentclientprotocol/sdk";
 import { ChildProcessWithoutNullStreams, spawn } from "node:child_process";
 import { Readable, Writable } from "node:stream";
@@ -115,16 +117,43 @@ export class AcpClient extends DisposableBase implements Client {
     return this.supportedModeState;
   }
 
-  async loadSession(sessionId: string, cwd: string): Promise<void> {
+  async loadSession(
+    sessionId: string,
+    cwd: string,
+  ): Promise<{
+    modeId: string | undefined;
+    modelId: string | undefined;
+    notifications: SessionNotification[];
+  }> {
     await this.ensureReady();
     if (!this.connection) {
       throw new Error("ACP connection is not ready");
     }
-    await this.connection.loadSession({
-      sessionId,
-      cwd,
-      mcpServers: [],
+
+    const notifications: SessionNotification[] = [];
+
+    const subscription = this.onSessionUpdate((notification) => {
+      if (notification.sessionId === sessionId) {
+        // Capture all session update types for history reconstruction
+        notifications.push(notification);
+      }
     });
+
+    try {
+      const response: LoadSessionResponse = await this.connection.loadSession({
+        sessionId,
+        cwd,
+        mcpServers: [],
+      });
+
+      return {
+        modelId: response.models?.currentModelId,
+        modeId: response.modes?.currentModeId,
+        notifications: notifications,
+      };
+    } finally {
+      subscription.dispose();
+    }
   }
 
   async prompt(

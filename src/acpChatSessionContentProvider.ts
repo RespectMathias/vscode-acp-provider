@@ -40,31 +40,22 @@ export class AcpChatSessionContentProvider
     resource: vscode.Uri,
     _token: vscode.CancellationToken,
   ): Promise<vscode.ChatSession> {
-    this.sessionManager.create(resource).then((session) => {
-      this.participant.init(session);
+    const response = await this.sessionManager.createOrGet(resource);
+    const { session: acpSession, history } = response;
 
-      this.logChannel.debug(
-        `firing option change for resource ${resource.toString()}`,
-      );
-      this._onDidChangeChatSessionOptions.fire({
-        resource,
-        updates: [
-          {
-            optionId: VscodeSessionOptions.Mode,
-            value: session.defaultChatOptions.modeId,
-          },
-          {
-            optionId: VscodeSessionOptions.Model,
-            value: session.defaultChatOptions.modelId,
-          },
-        ],
-      });
-    });
+    this.logChannel.debug(
+      `Providing chat session content for resource: ${resource.toString()}, acpSessionId: ${acpSession.acpSessionId}, history length: ${history?.length || 0}`,
+    );
+
+    this.participant.init(acpSession);
 
     const session: vscode.ChatSession = {
-      history: [],
-      requestHandler: undefined,
-      options: EMPTY_CHAT_OPTIONS,
+      history: history || [],
+      requestHandler: this.participant.requestHandler,
+      options: {
+        [VscodeSessionOptions.Mode]: acpSession.defaultChatOptions.modeId,
+        [VscodeSessionOptions.Model]: acpSession.defaultChatOptions.modelId,
+      },
     };
     return session;
   }

@@ -3,7 +3,6 @@ import * as vscode from "vscode";
 import { Session } from "./acpSessionManager";
 import { DisposableBase } from "./disposables";
 import { PermissionPromptManager } from "./permissionPrompts";
-import { SessionState } from "./sessionState";
 
 export class AcpChatParticipant extends DisposableBase {
   private session: Session | null = null;

@@ -1,13 +1,11 @@
 import { SessionInfo } from "@agentclientprotocol/sdk";
-import vscode, {
-  ChatSessionItem,
-  ChatSessionStatus
-} from "vscode";
+import vscode, { ChatSessionItem, ChatSessionStatus } from "vscode";
 import { AcpClient, AcpPermissionHandler } from "./acpClient";
 import { AgentRegistryEntry } from "./agentRegistry";
-import { createSessionType } from "./chatIdentifiers";
+import { createSessionUri, getSessionId } from "./chatIdentifiers";
 import { DisposableBase } from "./disposables";
 import { getWorkspaceCwd } from "./permittedPaths";
+import { TurnBuilder } from "./turnBuilder";
 
 export class Session {
   private _status: ChatSessionStatus;
@@ -48,8 +46,11 @@ export interface AcpSessionManager extends vscode.Disposable {
   onDidChangeSession: vscode.Event<{ original: Session; modified: Session }>;
 
   getDefault(): Promise<Session>;
-  create(vscodeResource: vscode.Uri): Promise<Session>;
-  get(vscodeResource: vscode.Uri): Session | undefined;
+  createOrGet(vscodeResource: vscode.Uri): Promise<{
+    session: Session;
+    history?: Array<vscode.ChatRequestTurn2 | vscode.ChatResponseTurn2>;
+  }>;
+  get(vscodeResource: vscode.Uri): Promise<Session | undefined>;
   list(): Promise<ChatSessionItem[]>;
 }
 
@@ -86,13 +87,11 @@ class SessionManager extends DisposableBase implements AcpSessionManager {
     this._onDidChangeSession.event;
   // end event definitions --------------------------------------------------
 
-  private activeSessions: Map<string, Session> = new Map();
+  private defaultSession: Session | null = null;
   private diskSessions: Map<string, SessionInfo> | null = null;
 
-  private createSessionResourceUri(sessionId: string): vscode.Uri {
-    return vscode.Uri.parse(
-      `${createSessionType(this.agent.id)}://${sessionId}`,
-    );
+  private createSessionUri(sessionId: string): vscode.Uri {
+    return createSessionUri(this.agent.id, sessionId);
   }
 
   private createSessionKey(vscodeResource: vscode.Uri): string {
@@ -100,22 +99,17 @@ class SessionManager extends DisposableBase implements AcpSessionManager {
   }
 
   async getDefault(cwd: string = getWorkspaceCwd()): Promise<Session> {
-    const DEFAULT_KEY = this.createSessionKey(
-      this.createSessionResourceUri(DEFAULT_SESSION_ID)
-    );
-
-    let session = this.activeSessions.get(DEFAULT_KEY);
-    if (session) {
-      return session;
+    if (this.defaultSession) {
+      return this.defaultSession;
     }
 
     // create new default session
     this.logger.info(`Creating default session for agent ${this.agent.id}`);
     const acpSession = await this.client.createSession(cwd);
 
-    session = new Session(
+    this.defaultSession = new Session(
       this.agent,
-      this.createSessionResourceUri(DEFAULT_SESSION_ID),
+      this.createSessionUri(DEFAULT_SESSION_ID),
       this.client,
       acpSession.sessionId,
       {
@@ -124,73 +118,135 @@ class SessionManager extends DisposableBase implements AcpSessionManager {
       },
     );
 
-    this.activeSessions.set(DEFAULT_KEY, session);
-    return session;
+    return this.defaultSession;
   }
 
-  async create(vscodeResource: vscode.Uri): Promise<Session> {
-    // check if a session exist for the given resource
+  async createOrGet(vscodeResource: vscode.Uri): Promise<{
+    session: Session;
+    history?: Array<vscode.ChatRequestTurn2 | vscode.ChatResponseTurn2>;
+  }> {
+    const doesExist = async () => {
+      const sessionId = getSessionId(vscodeResource);
+      await this.loadDiskSessionsIfNeeded();
+      return this.diskSessions?.has(sessionId);
+    };
+
+    if (await doesExist()) {
+      // check the disk sessions
+      await this.loadDiskSessionsIfNeeded();
+      const sessionId = getSessionId(vscodeResource);
+      if (this.diskSessions?.has(sessionId)) {
+        this.logger.debug(
+          `Session found on disk for resource ${vscodeResource.toString()}`,
+        );
+        // create a new session object to represent this disk session
+        const diskSession = this.diskSessions.get(sessionId)!;
+        const response = await this.client.loadSession(
+          diskSession.sessionId,
+          diskSession.cwd,
+        );
+
+        const session = new Session(
+          this.agent,
+          vscodeResource,
+          this.client,
+          diskSession.sessionId,
+          {
+            modeId: response.modeId || "",
+            modelId: response.modelId || "",
+          },
+        );
+
+        const turnBuilder = new TurnBuilder(this.agent.id);
+        response.notifications.forEach((notification) =>
+          turnBuilder.processNotification(notification),
+        );
+        const history = turnBuilder.getTurns();
+
+        return { session, history };
+      }
+      throw new Error(
+        `Session unexpectedly found during creation for resource ${vscodeResource.toString()}`,
+      );
+    } else {
+      // check if the default session exists, if so use it and update the map
+      if (this.defaultSession) {
+        this.logger.debug(
+          `Reusing default session for resource ${vscodeResource.toString()}`,
+        );
+        const resource = this.createSessionUri(
+          this.defaultSession.acpSessionId,
+        );
+        const key = this.createSessionKey(resource);
+        const newSession = new Session(
+          this.defaultSession.agent,
+          resource,
+          this.defaultSession.client,
+          this.defaultSession.acpSessionId,
+          this.defaultSession.defaultChatOptions,
+        );
+
+        this._onDidChangeSession.fire({
+          original: this.defaultSession,
+          modified: newSession,
+        });
+
+        return { session: newSession };
+      }
+
+      // create new session
+      this.logger.info(
+        `Creating new session for resource ${vscodeResource.toString()}`,
+      );
+      const acpSession = await this.client.createSession(getWorkspaceCwd());
+      const resource = this.createSessionUri(acpSession.sessionId);
+      const key = this.createSessionKey(resource);
+
+      const session = new Session(
+        this.agent,
+        resource,
+        this.client,
+        acpSession.sessionId,
+        {
+          modeId: acpSession.modes?.currentModeId || "",
+          modelId: acpSession.models?.currentModelId || "",
+        },
+      );
+
+      const expectedOriginal = new Session(
+        session.agent,
+        vscodeResource,
+        session.client,
+        session.acpSessionId,
+        session.defaultChatOptions,
+      );
+
+      this._onDidChangeSession.fire({
+        original: expectedOriginal,
+        modified: session,
+      });
+      return { session };
+    }
+  }
+
+  async get(vscodeResource: vscode.Uri): Promise<Session | undefined> {
     const key = this.createSessionKey(vscodeResource);
-    let session = this.activeSessions.get(key);
-    if (session) {
-      this.logger.debug(
-        `Reusing existing session for resource ${vscodeResource.toString()}`,
-      );
-      return session;
+    await this.loadDiskSessionsIfNeeded();
+
+    const session = this.diskSessions?.get(key);
+    if (!session) {
+      return undefined;
     }
-
-    // check if the default session exists, if so use it and update the map
-    const DEFAULT_KEY = this.createSessionKey(
-      this.createSessionResourceUri(DEFAULT_SESSION_ID)
-    );
-    session = this.activeSessions.get(DEFAULT_KEY);
-    if (session) {
-      this.logger.debug(
-        `Reusing default session for resource ${vscodeResource.toString()}`,
-      );
-      this.activeSessions.delete(DEFAULT_KEY);
-      this.activeSessions.set(key, session);
-      return session;
-    }
-
-    // create new session
-    this.logger.info(
-      `Creating new session for resource ${vscodeResource.toString()}`,
-    );
-    const acpSession = await this.client.createSession(getWorkspaceCwd());
-    const newResource = this.createSessionResourceUri(acpSession.sessionId);
-    const newKey = this.createSessionKey(newResource);
-
-    session = new Session(
+    return new Session(
       this.agent,
-      newResource,
+      vscodeResource,
       this.client,
-      acpSession.sessionId,
+      session.sessionId,
       {
-        modeId: acpSession.modes?.currentModeId || "",
-        modelId: acpSession.models?.currentModelId || "",
+        modeId: "",
+        modelId: "",
       },
     );
-
-    const expectedOriginal = new Session(
-      session.agent,
-      vscodeResource,
-      session.client,
-      session.acpSessionId,
-      session.defaultChatOptions,
-    );
-
-    this._onDidChangeSession.fire({
-      original: expectedOriginal,
-      modified: session,
-    });
-    this.activeSessions.set(newKey, session);
-    return session;
-  }
-
-  get(vscodeResource: vscode.Uri): Session | undefined {
-    const key = vscodeResource.toString();
-    return this.activeSessions.get(key);
   }
 
   async list(): Promise<ChatSessionItem[]> {
@@ -199,57 +255,27 @@ class SessionManager extends DisposableBase implements AcpSessionManager {
       return [];
     }
 
-    // proritize the disk sessions since they have the name assigned by the agent
     const chatSessionItems: ChatSessionItem[] = [];
     for (const [sessionId, session] of this.diskSessions) {
-      const resource = this.createSessionResourceUri(sessionId);
+      const resource = this.createSessionUri(sessionId);
       const key = this.createSessionKey(resource);
-      const inProgressSession = this.activeSessions.get(key);
 
       chatSessionItems.push({
         label: session.title || session.sessionId,
-        status: inProgressSession
-          ? ChatSessionStatus.InProgress
-          : ChatSessionStatus.Completed,
+        status: ChatSessionStatus.Completed,
         resource: resource,
         timing: {
-          startTime: Number(session.updatedAt)
-        }
-      });
-    }
-
-    const DEFAULT_KEY = this.createSessionKey(
-      this.createSessionResourceUri(DEFAULT_SESSION_ID),
-    );
-
-    for (const session of this.activeSessions.values()) {
-      // skip any sessions already in disk sessions and also skip default session
-      if (this.diskSessions.has(session.acpSessionId) || session.vscodeResource.toString() === DEFAULT_KEY) {
-        continue;
-      }
-
-      chatSessionItems.push({
-        label: session.acpSessionId,
-        status: session.status,
-        resource: session.vscodeResource,
+          startTime: Number(session.updatedAt),
+        },
       });
     }
     return chatSessionItems;
   }
 
-  async dispose(): Promise<void> {
-    const DEFAULT_KEY = this.createSessionKey(
-      this.createSessionResourceUri(DEFAULT_SESSION_ID),
-    );
-    for (const session of this.activeSessions.values()) {
-      if (session.vscodeResource.toString() === DEFAULT_KEY) {
-        await this.client.cancel(session.acpSessionId)
-      }
-    }
-  }
-
-  private async loadDiskSessionsIfNeeded(): Promise<void> {
-    if (!this.diskSessions) {
+  private async loadDiskSessionsIfNeeded(
+    reload: boolean = false,
+  ): Promise<void> {
+    if (!this.diskSessions || reload) {
       const sessions: SessionInfo[] =
         await this.client.listSessions(getWorkspaceCwd());
       this.diskSessions = new Map(sessions.map((s) => [s.sessionId, s]));
