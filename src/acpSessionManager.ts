@@ -88,6 +88,7 @@ class SessionManager extends DisposableBase implements AcpSessionManager {
   // end event definitions --------------------------------------------------
 
   private activeSessions: Map<string, Session> = new Map();
+  private diskSessions: Map<string, SessionInfo> | null = null;
 
   private createSessionResourceUri(sessionId: string): vscode.Uri {
     return vscode.Uri.parse(
@@ -192,23 +193,47 @@ class SessionManager extends DisposableBase implements AcpSessionManager {
   }
 
   async list(): Promise<ChatSessionItem[]> {
-    const diskSessions: SessionInfo[] =
-      await this.client.listSessions(getWorkspaceCwd());
+    await this.loadDiskSessionsIfNeeded();
+    if (!this.diskSessions) {
+      return [];
+    }
 
+    // proritize the disk sessions since they have the name assigned by the agent
     const chatSessionItems: ChatSessionItem[] = [];
-    for (const diskSession of diskSessions) {
-      const resource = this.createSessionResourceUri(diskSession.sessionId);
+    for (const [sessionId, session] of this.diskSessions) {
+      const resource = this.createSessionResourceUri(sessionId);
       const key = this.createSessionKey(resource);
       const inProgressSession = this.activeSessions.get(key);
 
       chatSessionItems.push({
-        label: diskSession.title || diskSession.sessionId,
+        label: session.title || session.sessionId,
         status: inProgressSession
           ? ChatSessionStatus.InProgress
           : ChatSessionStatus.Completed,
         resource: resource,
       });
     }
+
+    for (const session of this.activeSessions.values()) {
+      // skip any sessions already in disk sessions and also skip default session
+      if (this.diskSessions.has(session.acpSessionId) || session.acpSessionId === DEFAULT_SESSION_ID) {
+        continue;
+      }
+
+      chatSessionItems.push({
+        label: session.acpSessionId,
+        status: session.status,
+        resource: session.vscodeResource,
+      });
+    }
     return chatSessionItems;
+  }
+
+  private async loadDiskSessionsIfNeeded(): Promise<void> {
+    if (!this.diskSessions) {
+      const sessions: SessionInfo[] =
+        await this.client.listSessions(getWorkspaceCwd());
+      this.diskSessions = new Map(sessions.map((s) => [s.sessionId, s]));
+    }
   }
 }
