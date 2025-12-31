@@ -1,4 +1,5 @@
 import * as vscode from "vscode";
+import { AgentType } from "./types";
 
 export const ACP_CHAT_SCHEME = "acp";
 
@@ -15,10 +16,23 @@ export function createSessionType(agentId: string): string {
   return `${ACP_CHAT_SCHEME}-${agentId}`;
 }
 
-export function getSessionId(resource: vscode.Uri): string {
-  return resource.authority;
+export function createSessionUri(agentId: string, sessionId: string) {
+  return vscode.Uri.parse(`${createSessionType(agentId)}:/${sessionId}`);
 }
 
-export function createSessionUri(agentId: string, sessionId: string) {
-  return vscode.Uri.parse(`${createSessionType(agentId)}://${sessionId}`);
+export function decodeVscodeResource(resource: vscode.Uri): {
+  isUntitled: boolean;
+  sessionId: string;
+} {
+  if (!resource.path || resource.path.length < 2) {
+    throw new Error(`Invalid resource path: ${resource.toString()}`);
+  }
+
+  const sessionId: string = resource.path.substring(1);
+  const isUntitled = sessionId.startsWith("untitled-");
+
+  return {
+    isUntitled,
+    sessionId,
+  };
 }

@@ -47,8 +47,6 @@ export class AcpChatSessionContentProvider
       `Providing chat session content for resource: ${resource.toString()}, acpSessionId: ${acpSession.acpSessionId}, history length: ${history?.length || 0}`,
     );
 
-    this.participant.init(acpSession);
-
     const session: vscode.ChatSession = {
       history: history || [],
       requestHandler: this.participant.requestHandler,
@@ -115,7 +113,7 @@ export class AcpChatSessionContentProvider
     updates: ReadonlyArray<vscode.ChatSessionOptionUpdate>,
     token: vscode.CancellationToken,
   ): Promise<void> {
-    const session = await this.sessionManager.get(resource);
+    const session = await this.sessionManager.getActive(resource);
     if (!session) {
       this.logChannel.warn(
         `No session found to handle provideHandleOptionsChange for ${resource.toString()}`,

@@ -50,13 +50,6 @@ function registerAgents(params: {
       ),
     );
 
-    const participant = new AcpChatParticipant(
-      permisionPromptsManager,
-      outputChannel,
-      `${ACP_CHAT_SCHEME}-${agent.id}`,
-    );
-    context.subscriptions.push(participant);
-
     const sessionManager = createAcpSessionManager(
       params.sessionDb,
       agent,
@@ -64,6 +57,14 @@ function registerAgents(params: {
       outputChannel,
     );
     context.subscriptions.push(sessionManager);
+
+    const participant = new AcpChatParticipant(
+      permisionPromptsManager,
+      sessionManager,
+      outputChannel,
+      `${ACP_CHAT_SCHEME}-${agent.id}`,
+    );
+    context.subscriptions.push(participant);
 
     const sessionContentProvider = new AcpChatSessionContentProvider(
       sessionManager,

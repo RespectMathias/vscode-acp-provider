@@ -1,26 +1,21 @@
 import { ContentBlock, SessionNotification } from "@agentclientprotocol/sdk";
 import * as vscode from "vscode";
-import { Session } from "./acpSessionManager";
+import { AcpSessionManager, Session } from "./acpSessionManager";
 import { DisposableBase } from "./disposables";
 import { PermissionPromptManager } from "./permissionPrompts";
 
 export class AcpChatParticipant extends DisposableBase {
-  private session: Session | null = null;
-
   requestHandler: vscode.ChatRequestHandler = this.handleRequest.bind(this);
   onDidReceiveFeedback: vscode.Event<vscode.ChatResultFeedback> =
     new vscode.EventEmitter<vscode.ChatResultFeedback>().event;
 
   constructor(
     private readonly permissionManager: PermissionPromptManager,
+    private readonly sessionManager: AcpSessionManager,
     private readonly outputChannel: vscode.OutputChannel,
     readonly agentId: string,
   ) {
     super();
-  }
-
-  init(session: Session): void {
-    this.session = session;
   }
 
   private async handleRequest(
@@ -40,7 +35,7 @@ export class AcpChatParticipant extends DisposableBase {
     }
 
     // Defensive lookup: accept Uri or resource-like objects by using getByKey.
-    const session = this.session;
+    const session = this.sessionManager.getActive(sessionResource);
     if (!session) {
       // Log minimal diagnostics to help debugging when resources don't match
       console.warn(
@@ -58,7 +53,7 @@ export class AcpChatParticipant extends DisposableBase {
     if (token.isCancellationRequested) {
       return;
     }
-    this.session?.markAsInProgress();
+    session.markAsInProgress();
     response.progress("Connecting to ACP agent...");
 
     this.cancelPendingRequest(session);
