@@ -12,6 +12,7 @@ export type DiskSession = {
 };
 
 export interface SessionDb extends vscode.Disposable {
+  onDataChanged: vscode.Event<void>;
   listSessions(agent: AgentType): Promise<DiskSession[]>;
   upsertSession(agent: AgentType, info: DiskSession): Promise<void>;
   deleteSession(agent: AgentType, sessionId: string): Promise<void>;
@@ -51,6 +52,12 @@ class SqlLiteSessionDb implements SessionDb {
     this.init();
   }
 
+  // start event definitions --------------------------------------------------
+  private readonly _onDataChanged: vscode.EventEmitter<void> =
+    new vscode.EventEmitter<void>();
+  onDataChanged: vscode.Event<void> = this._onDataChanged.event;
+  // end event definitions -----------------------------------------------------
+
   private init() {
     const dbPath = getAcpDbFile(this.context);
     this.logger.info(`Using ACP session database at: ${dbPath}`);
@@ -74,9 +81,9 @@ class SqlLiteSessionDb implements SessionDb {
   async upsertSession(agent: AgentType, info: DiskSession): Promise<void> {
     const existing = this.db!.prepare(
       "SELECT COUNT(*) AS count FROM sessions WHERE agent_type=? AND session_id=?",
-    ).get(agent, info.sessionId);
+    ).get(agent, info.sessionId) as { count: number };
 
-    if (existing) {
+    if (existing.count > 0) {
       await this.updateSession(agent, info);
     } else {
       await this.insertSession(agent, info);
@@ -87,24 +94,33 @@ class SqlLiteSessionDb implements SessionDb {
     agent: AgentType,
     info: DiskSession,
   ): Promise<void> {
-    this.db!.prepare(
+    const resp = this.db!.prepare(
       "INSERT OR IGNORE INTO sessions (agent_type, session_id, cwd, title, updated_at) VALUES (?, ?, ?, ?, ?)",
     ).run(agent, info.sessionId, info.cwd, info.title, info.updatedAt);
+    if (resp.changes > 0) {
+      this._onDataChanged.fire();
+    }
   }
 
   private async updateSession(
     agent: AgentType,
     info: DiskSession,
   ): Promise<void> {
-    this.db!.prepare(
+    const resp = this.db!.prepare(
       "UPDATE sessions SET cwd=?, title=?, updated_at=? WHERE agent_type=? AND session_id=?",
     ).run(info.cwd, info.title, info.updatedAt, agent, info.sessionId);
+    if (resp.changes > 0) {
+      this._onDataChanged.fire();
+    }
   }
 
   async deleteSession(agent: AgentType, sessionId: string): Promise<void> {
-    this.db!.prepare(
+    const resp = this.db!.prepare(
       "DELETE FROM sessions WHERE agent_type=? AND session_id=?",
     ).run(agent, sessionId);
+    if (resp.changes > 0) {
+      this._onDataChanged.fire();
+    }
   }
 
   dispose() {

@@ -110,9 +110,12 @@ export class AcpChatParticipant extends DisposableBase {
       }
 
       session.markAsCompleted();
-      if (!context.chatSessionContext.isUntitled) {
-        session.title = context.chatSessionContext.chatSessionItem.label;
+      if (context.chatSessionContext.isUntitled) {
+        session.title =
+          request.prompt.substring(0, Math.min(request.prompt.length, 50)) ||
+          session.title;
       }
+      this.sessionManager.syncSessionState(sessionResource, session);
 
       // Log detailed stop reason to the ACP Output channel for troubleshooting.
       this.outputChannel.appendLine(

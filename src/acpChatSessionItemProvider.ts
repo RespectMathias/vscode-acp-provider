@@ -38,12 +38,14 @@ class AcpChatSessionItemProvider
           modified: modifiedItem,
         });
 
-        this.sessionDb.upsertSession(original.agent.id, {
-          sessionId: modified.acpSessionId,
-          cwd: modified.cwd,
-          title: modified.title,
-          updatedAt: modified.updatedAt,
-        });
+        this.sessionDb
+          .upsertSession(original.agent.id, {
+            sessionId: modified.acpSessionId,
+            cwd: modified.cwd,
+            title: modified.title,
+            updatedAt: modified.updatedAt,
+          })
+          .then(() => this._onDidChangeChatSessionItems.fire());
 
         this.logger.debug(
           `fired commit for session item change: ${original.acpSessionId} -> ${modified.acpSessionId}`,

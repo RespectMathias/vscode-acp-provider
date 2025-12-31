@@ -72,6 +72,10 @@ export interface AcpSessionManager extends vscode.Disposable {
   get(vscodeResource: vscode.Uri): Promise<DiskSession | undefined>;
   getActive(vscodeResource: vscode.Uri): Session | undefined;
   list(): Promise<ChatSessionItem[]>;
+  syncSessionState(
+    vscodeResource: vscode.Uri,
+    modified: Session,
+  ): Promise<void>;
 }
 
 export function createAcpSessionManager(
@@ -94,7 +98,18 @@ class SessionManager extends DisposableBase implements AcpSessionManager {
     private readonly logger: vscode.LogOutputChannel,
   ) {
     super();
-    this.client = new AcpClient(agent, permissionHandler, logger);
+    this.client = this._register(
+      new AcpClient(agent, permissionHandler, logger),
+    );
+
+    this._register(
+      this.sessionDb.onDataChanged(async () => {
+        this.logger.info(
+          `Session DB data changed event received for agent ${this.agent.id}`,
+        );
+        await this.loadDiskSessionsIfNeeded(true);
+      }),
+    );
   }
 
   // start event definitions --------------------------------------------------
@@ -258,6 +273,27 @@ class SessionManager extends DisposableBase implements AcpSessionManager {
       });
     }
     return chatSessionItems;
+  }
+
+  async syncSessionState(
+    vscodeResource: vscode.Uri,
+    modified: Session,
+  ): Promise<void> {
+    const decoded = decodeVscodeResource(vscodeResource);
+    const session = this.activeSessions.get(decoded.sessionId);
+
+    if (!session) {
+      this.logger.warn(
+        `No active session found for resource ${vscodeResource.toString()} to sync state.`,
+      );
+      return;
+    }
+
+    this.activeSessions.set(decoded.sessionId, modified);
+    this._onDidChangeSession.fire({
+      original: session,
+      modified: modified,
+    });
   }
 
   private async loadDiskSessionsIfNeeded(
