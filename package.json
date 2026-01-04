@@ -145,7 +145,8 @@
     }
   },
   "scripts": {
-    "vscode:prepublish": "npm run compile",
+    "clean": "rm -rf ./out",
+    "vscode:prepublish": "npm run clean && npm run compile",
     "compile": "tsc -p ./",
     "watch": "tsc -watch -p ./",
     "pretest": "npm run compile",
