@@ -39,7 +39,7 @@ function registerAgents(params: {
 }): void {
   const { registry, outputChannel, context } = params;
   registry.list().forEach((agent) => {
-    const permisionPromptsManager = new PermissionPromptManager();
+    const permisionPromptsManager = new PermissionPromptManager(outputChannel);
     context.subscriptions.push(permisionPromptsManager);
 
     context.subscriptions.push(

@@ -423,10 +423,8 @@ ${lines.join("\n")}`
     notification: SessionNotification,
     response: vscode.ChatResponseStream,
   ): void {
+    this.logger.trace(JSON.stringify(notification));
     const update = notification.update;
-    this.logger.trace(
-      `Handling chat request for agent ${this.agentId} - update : ${JSON.stringify(update)}`,
-    );
 
     switch (update.sessionUpdate) {
       case "agent_message_chunk": {

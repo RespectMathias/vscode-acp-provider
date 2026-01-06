@@ -51,6 +51,10 @@ export class PermissionPromptManager
   private sessionContext: SessionChatContext | null = null;
   private pendingPrompt: PendingPrompt | null = null;
 
+  constructor(private readonly logger: vscode.LogOutputChannel) {
+    super();
+  }
+
   bindSessionResponse(context: PermissionPromptContext): vscode.Disposable {
     const sessionId = context.session.acpSessionId;
     if (!sessionId) {
@@ -172,25 +176,17 @@ export class PermissionPromptManager
   }
 
   private renderChatPrompt(pending: PendingPrompt): void {
+    this.logger.trace(JSON.stringify(pending));
+
     const context = pending.context;
     if (!context) {
       return;
     }
 
-    const toolInfo = this.describeToolCall(pending.request);
-    const lines = [
-      `### Permission required`,
-      `**Agent:** ${context.agentLabel}`,
-      `**Action:** ${toolInfo}`,
-    ];
-    const description = pending.request.toolCall.title;
-    if (description) {
-      lines.push(`**Details:** ${description}`);
-    }
-
-    context.response.markdown(lines.join("\n"));
-    context.response.progress("Awaiting your decision...");
-
+    const toolCall = pending.request.toolCall;
+    const message = new vscode.MarkdownString(toolCall.title ?? `\`\`\`json\n ${JSON.stringify(toolCall.rawInput)}\n\`\`\``);
+    context.response.markdown("## Permission Required");
+    context.response.markdown(message);
     const commandId = createPermissionResolveCommandId(context.agentId);
     for (const option of pending.request.options) {
       context.response.button({
