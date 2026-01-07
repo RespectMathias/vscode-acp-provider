@@ -18,7 +18,7 @@ import { AgentRegistryEntry } from "./agentRegistry";
 import { DisposableBase } from "./disposables";
 import { AcpClient, AcpPermissionHandler } from "./acpClient";
 
-const STREAM_DELAY_MS = 200;
+const STREAM_DELAY_MS = 500;
 const DEFAULT_STOP_RESPONSE: PromptResponse = { stopReason: "end_turn" };
 
 type NotificationSequence = ReadonlyArray<SessionNotification>;
@@ -195,7 +195,7 @@ class PreprogrammedAcpClient extends DisposableBase implements AcpClient {
           },
           {
             kind: "reject_always",
-            name: "Deny",
+            name: "Reject",
             optionId: "deny",
           },
         ],
@@ -210,15 +210,9 @@ class PreprogrammedAcpClient extends DisposableBase implements AcpClient {
       if (response.outcome.outcome === "selected") {
         const plan = program.notifications as PromptNotificationPlan;
         if (response.outcome.optionId === "allow") {
-          await this.streamNotificationPlan(
-            plan.permissionAllowed,
-            "permissionAllowed",
-          );
+          await this.streamNotificationPlan(plan, "permissionAllowed");
         } else {
-          await this.streamNotificationPlan(
-            plan.permissionDenied,
-            "permissionDenied",
-          );
+          await this.streamNotificationPlan(plan, "permissionDenied");
         }
       } else {
         throw new Error("Permission request was not completed");
