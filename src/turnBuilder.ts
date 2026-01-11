@@ -1,19 +1,24 @@
 // SPDX-License-Identifier: Apache-2.0
-import { SessionNotification } from "@agentclientprotocol/sdk";
+import {
+  ContentBlock,
+  SessionNotification,
+  ToolCall,
+  ToolCallUpdate,
+} from "@agentclientprotocol/sdk";
 import * as vscode from "vscode";
+import { buildDiffMarkdown, getToolInfo } from "./chatRenderingUtils";
 
 /**
  * Builds VS Code chat turns from ACP session notification events.
  */
 export class TurnBuilder {
   private currentUserMessage = "";
-  private currentAgentParts: Array<
-    vscode.ChatResponseMarkdownPart | vscode.ChatResponseProgressPart
-  > = [];
-  private processedMessages = new Set<string>();
+  private currentUserReferences: vscode.ChatPromptReference[] = [];
+  private currentAgentParts: vscode.ChatResponsePart[] = [];
+  private currentAgentMetadata: Record<string, unknown> = {};
   private agentMessageChunks: string[] = [];
   private turns: Array<vscode.ChatRequestTurn2 | vscode.ChatResponseTurn2> = [];
-  private participantId: string;
+  private readonly participantId: string;
 
   constructor(participantId: string) {
     this.participantId = participantId;
@@ -25,37 +30,24 @@ export class TurnBuilder {
     switch (update.sessionUpdate) {
       case "user_message_chunk": {
         this.flushPendingAgentMessage();
-        // a poor effort to only filter the user prompt. We do see that the user prompt comes first, so lets use that.
-        // if we think we need other information later, we will find a way to add them.
-        if (this.currentUserMessage === "") {
-          const text =
-            update.content.type === "text" ? update.content.text : "";
-          // some cleanup for user message
-          if (text.startsWith("User:")) {
-            this.currentUserMessage += text.replace("User:", "").trimStart();
-          } else {
-            this.currentUserMessage += text;
-          }
-        }
+        this.captureUserMessageChunk(update.content);
         break;
       }
 
       case "agent_message_chunk": {
         this.flushPendingUserMessage();
-
-        const text = update.content.type === "text" ? update.content.text : "";
-        this.agentMessageChunks.push(text);
+        this.captureAgentMessageChunk(update.content);
         break;
       }
 
       case "agent_thought_chunk": {
         this.flushPendingUserMessage();
+        this.flushAgentMessageChunksToMarkdown();
 
-        const thought =
-          update.content.type === "text" ? update.content.text : "";
-        if (thought.trim()) {
+        const thought = this.getContentText(update.content);
+        if (thought?.trim()) {
           this.currentAgentParts.push(
-            new vscode.ChatResponseProgressPart(thought),
+            new vscode.ChatResponseProgressPart(thought.trim()),
           );
         }
         break;
@@ -63,45 +55,25 @@ export class TurnBuilder {
 
       case "tool_call": {
         this.flushPendingUserMessage();
-        // TODO: Use ChatToolInvocationPart once available in stable API
-        const toolName = update.toolCallId || "tool";
-        const toolMsg = `🔧 ${toolName}`;
-        this.currentAgentParts.push(
-          new vscode.ChatResponseMarkdownPart(
-            new vscode.MarkdownString(toolMsg),
-          ),
-        );
+        this.flushAgentMessageChunksToMarkdown();
+        this.appendToolStatus(update as ToolCall, "running");
         break;
       }
 
       case "tool_call_update": {
-        // Tool updates would be handled here when ChatToolInvocationPart is available
-        // for now use markdown parts to represent tool call updates
         this.flushPendingUserMessage();
-
-        const toolName = update.toolCallId || "tool";
-        const toolMsg = `🔧 ${toolName} (updated)`;
-        this.currentAgentParts.push(
-          new vscode.ChatResponseMarkdownPart(
-            new vscode.MarkdownString(toolMsg),
-          ),
-        );
+        this.flushAgentMessageChunksToMarkdown();
+        this.appendToolUpdate(update as ToolCallUpdate);
         break;
       }
 
       case "plan": {
-        // implement this using markdown checkbox list
         this.flushPendingUserMessage();
-        update.entries.forEach((entry) => {
-          const planMsg = `- [ ] ${entry}`;
-          this.currentAgentParts.push(
-            new vscode.ChatResponseMarkdownPart(
-              new vscode.MarkdownString(planMsg),
-            ),
-          );
-        });
+        this.flushAgentMessageChunksToMarkdown();
+        this.appendPlanEntries(update.entries);
         break;
       }
+
       // Ignore other session update types for history
       case "available_commands_update":
       case "current_mode_update":
@@ -120,50 +92,157 @@ export class TurnBuilder {
 
   reset(): void {
     this.currentUserMessage = "";
+    this.currentUserReferences = [];
     this.currentAgentParts = [];
-    this.processedMessages.clear();
+    this.currentAgentMetadata = {};
     this.agentMessageChunks = [];
     this.turns = [];
   }
 
-  private flushPendingUserMessage(): void {
-    if (this.currentUserMessage.trim()) {
-      this.turns.push(
-        new vscode.ChatRequestTurn2(
-          this.currentUserMessage,
-          undefined, // command
-          [], // references
-          this.participantId,
-          [], // toolReferences
-          undefined, // editedFileEvents
-        ),
-      );
-      this.currentUserMessage = "";
+  private captureUserMessageChunk(content?: ContentBlock): void {
+    const text = this.getContentText(content);
+    if (!text) {
+      return;
+    }
+
+    const normalized = text.startsWith("User:")
+      ? text.replace(/^User:\s*/, "")
+      : text;
+    this.currentUserMessage += normalized;
+  }
+
+  private captureAgentMessageChunk(content?: ContentBlock): void {
+    const text = this.getContentText(content);
+    if (text) {
+      this.agentMessageChunks.push(text);
     }
   }
 
-  private flushPendingAgentMessage(): void {
-    if (this.agentMessageChunks.length > 0) {
-      const content = this.agentMessageChunks.join("");
-      if (content.trim()) {
-        this.currentAgentParts.push(
-          new vscode.ChatResponseMarkdownPart(
-            new vscode.MarkdownString(content),
-          ),
-        );
-      }
-      this.agentMessageChunks = [];
+  private appendToolStatus(update: ToolCall, stateLabel: string): void {
+    const info = getToolInfo(update);
+    const title = info.name || update.toolCallId || "tool";
+    const markdown = new vscode.MarkdownString();
+    markdown.appendMarkdown(`🔧 **${title}** (${stateLabel})`);
+    this.currentAgentParts.push(new vscode.ChatResponseMarkdownPart(markdown));
+  }
+
+  private appendToolUpdate(update: ToolCallUpdate): void {
+    if (update.status !== "completed" && update.status !== "failed") {
+      return;
     }
 
-    if (this.currentAgentParts.length > 0) {
-      this.turns.push(
-        new vscode.ChatResponseTurn2(
-          this.currentAgentParts,
-          {}, // result
-          this.participantId,
-        ),
-      );
-      this.currentAgentParts = [];
+    const info = getToolInfo(update);
+    const title = info.name || update.toolCallId || "tool";
+    const markdown = new vscode.MarkdownString();
+    markdown.appendMarkdown(
+      `🔧 **${title}** (${update.status === "completed" ? "completed" : "failed"})`,
+    );
+    if (info.input) {
+      markdown.appendMarkdown(`\n**Input**\n\n${info.input}`);
     }
+    if (info.output) {
+      markdown.appendMarkdown(`\n**Output**\n\n${info.output}`);
+    }
+    this.currentAgentParts.push(new vscode.ChatResponseMarkdownPart(markdown));
+
+    if (!update.content?.length) {
+      return;
+    }
+
+    for (const content of update.content) {
+      if (content.type !== "diff") {
+        continue;
+      }
+
+      const diffMarkdown = buildDiffMarkdown(
+        content.path,
+        content.oldText ?? undefined,
+        content.newText ?? undefined,
+      );
+      if (!diffMarkdown) {
+        continue;
+      }
+      this.currentAgentParts.push(
+        new vscode.ChatResponseMarkdownPart(diffMarkdown),
+      );
+    }
+  }
+
+  private appendPlanEntries(
+    entries: Array<{ content: string; status?: string }>,
+  ): void {
+    if (!entries.length) {
+      return;
+    }
+
+    const markdown = new vscode.MarkdownString();
+    markdown.appendMarkdown("## Plan\n");
+    for (const entry of entries) {
+      const checkbox = entry.status === "completed" ? "x" : " ";
+      markdown.appendMarkdown(`-  [${checkbox}] ${entry.content}\n`);
+    }
+    this.currentAgentParts.push(new vscode.ChatResponseMarkdownPart(markdown));
+  }
+
+  private flushPendingUserMessage(): void {
+    if (!this.currentUserMessage.trim()) {
+      return;
+    }
+
+    this.turns.push(
+      new vscode.ChatRequestTurn2(
+        this.currentUserMessage,
+        undefined,
+        this.currentUserReferences,
+        this.participantId,
+        [],
+        undefined,
+      ),
+    );
+    this.currentUserMessage = "";
+    this.currentUserReferences = [];
+  }
+
+  private flushPendingAgentMessage(): void {
+    this.flushAgentMessageChunksToMarkdown();
+
+    if (!this.currentAgentParts.length) {
+      return;
+    }
+
+    this.turns.push(
+      new vscode.ChatResponseTurn2(
+        this.currentAgentParts,
+        { metadata: this.currentAgentMetadata },
+        this.participantId,
+      ),
+    );
+    this.currentAgentParts = [];
+    this.currentAgentMetadata = {};
+  }
+
+  private flushAgentMessageChunksToMarkdown(): void {
+    if (!this.agentMessageChunks.length) {
+      return;
+    }
+
+    const content = this.agentMessageChunks.join("").trim();
+    this.agentMessageChunks = [];
+    if (!content) {
+      return;
+    }
+
+    const markdown = new vscode.MarkdownString(content);
+    this.currentAgentParts.push(new vscode.ChatResponseMarkdownPart(markdown));
+  }
+
+  private getContentText(content?: ContentBlock): string | undefined {
+    if (!content) {
+      return undefined;
+    }
+    if (content.type === "text") {
+      return content.text;
+    }
+    return undefined;
   }
 }

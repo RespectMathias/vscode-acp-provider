@@ -47,7 +47,7 @@ export interface PreprogrammedPromptProgram {
 }
 
 export interface PreprogrammedSessionConfig {
-  readonly sessionId?: string;
+  readonly sessionId: string;
   readonly cwd?: string;
   readonly label?: string;
   readonly models?: SessionModelState;
@@ -57,9 +57,12 @@ export interface PreprogrammedSessionConfig {
 export interface PreprogrammedConfig {
   readonly agent?: AgentRegistryEntry;
   readonly agentCapabilities?: AgentCapabilities;
-  readonly session?: PreprogrammedSessionConfig;
+  readonly session: PreprogrammedSessionConfig;
   readonly promptPrograms?: Array<PreprogrammedPromptProgram>;
   readonly permissionHandler: AcpPermissionHandler;
+  readonly sessionToResume: PreprogrammedSessionConfig & {
+    turns: NotificationSequence;
+  };
 }
 
 class PreprogrammedAcpClient extends DisposableBase implements AcpClient {
@@ -94,8 +97,8 @@ class PreprogrammedAcpClient extends DisposableBase implements AcpClient {
     this.agentCapabilities = config.agentCapabilities;
     this.permissionHandler = config.permissionHandler;
 
-    const sessionConfig = config.session ?? {};
-    this.sessionId = sessionConfig.sessionId ?? "preprogrammed-session";
+    const sessionConfig = config.session;
+    this.sessionId = sessionConfig.sessionId;
     this.cwd = sessionConfig.cwd ?? "";
     this.label = sessionConfig.label ?? this.sessionId;
     this.models = sessionConfig.models;
@@ -135,9 +138,11 @@ class PreprogrammedAcpClient extends DisposableBase implements AcpClient {
   async listSessions(_cwd: string): Promise<SessionInfo[]> {
     return [
       {
-        sessionId: this.sessionId,
-        title: this.label,
-        cwd: this.cwd,
+        sessionId: this.config.sessionToResume.sessionId,
+        title:
+          this.config.sessionToResume.label ??
+          this.config.sessionToResume.sessionId,
+        cwd: this.config.sessionToResume.cwd ?? "",
         updatedAt: new Date().toISOString(),
       },
     ];
@@ -152,14 +157,13 @@ class PreprogrammedAcpClient extends DisposableBase implements AcpClient {
     notifications: SessionNotification[];
   }> {
     await this.ensureReady();
-    if (sessionId !== this.sessionId) {
+    if (sessionId !== this.config.sessionToResume.sessionId) {
       throw new Error(`Unknown session ${sessionId}`);
     }
-
     return {
-      modelId: this.models?.currentModelId,
-      modeId: this.modes?.currentModeId,
-      notifications: [],
+      modeId: this.config.sessionToResume.modes?.currentModeId,
+      modelId: this.config.sessionToResume.models?.currentModelId,
+      notifications: [...this.config.sessionToResume.turns],
     };
   }
 

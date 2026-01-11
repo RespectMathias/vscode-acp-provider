@@ -13,6 +13,41 @@ export function createTestAcpClientWithScenarios(
     session: {
       sessionId: "test-session-id",
     },
+    agentCapabilities: {
+      loadSession: true,
+    },
+    sessionToResume: {
+      sessionId: "test-session-id",
+      turns: [],
+      cwd: "",
+      label: "Session to resume",
+      models: {
+        availableModels: [
+          {
+            modelId: "gpt-4",
+            name: "GPT-4",
+          },
+          {
+            modelId: "gpt-3.5-turbo",
+            name: "GPT-3.5 Turbo",
+          },
+        ],
+        currentModelId: "gpt-4",
+      },
+      modes: {
+        availableModes: [
+          {
+            id: "plan",
+            name: "Plan",
+          },
+          {
+            id: "build",
+            name: "Build",
+          },
+        ],
+        currentModeId: "plan",
+      },
+    },
   };
 
   addThinkingOfJoke(config);
@@ -20,6 +55,7 @@ export function createTestAcpClientWithScenarios(
   addToolCallFailure(config);
   addToolCallSuccess(config);
   addToolCallDiffPreview(config);
+  addResumeSessionScenario(config);
 
   return createPreprogrammedAcpClient(config);
 }
@@ -269,4 +305,120 @@ function addToolCallDiffPreview(config: PreprogrammedConfig) {
   });
 }
 
-
+function addResumeSessionScenario(config: PreprogrammedConfig) {
+  config.sessionToResume.turns = [
+    {
+      sessionId: "test-session-id",
+      update: {
+        sessionUpdate: "user_message_chunk",
+        content: {
+          type: "text",
+          text: "User: update release plan",
+        },
+      },
+    },
+    {
+      sessionId: "test-session-id",
+      update: {
+        sessionUpdate: "user_message_chunk",
+        content: {
+          type: "text",
+          text: " with telemetry milestones",
+        },
+      },
+    },
+    {
+      sessionId: "test-session-id",
+      update: {
+        sessionUpdate: "agent_message_chunk",
+        content: {
+          type: "text",
+          text: "Understood, preparing the updated plan.",
+        },
+      },
+    },
+    {
+      sessionId: "test-session-id",
+      update: {
+        sessionUpdate: "agent_thought_chunk",
+        content: {
+          type: "text",
+          text: "Reviewing current release checklist...",
+        },
+      },
+    },
+    {
+      sessionId: "test-session-id",
+      update: {
+        sessionUpdate: "plan",
+        entries: [
+          {
+            content: "Collect performance metrics",
+            priority: "high",
+            status: "completed",
+          },
+          {
+            content: "Draft release notes",
+            priority: "medium",
+            status: "pending",
+          },
+        ],
+      },
+    },
+    {
+      sessionId: "test-session-id",
+      update: {
+        sessionUpdate: "tool_call",
+        toolCallId: "release_plan_diff",
+        title: "Update release-plan.md",
+        rawInput: {
+          command: ["apply_patch", "release-plan.md"],
+        },
+        status: "in_progress",
+      },
+    },
+    {
+      sessionId: "test-session-id",
+      update: {
+        sessionUpdate: "tool_call_update",
+        toolCallId: "release_plan_diff",
+        status: "completed",
+        rawOutput: {
+          aggregated_output: "Patched release-plan.md",
+        },
+        content: [
+          {
+            type: "diff",
+            path: "release-plan.md",
+            oldText: "## Release Notes\n- Initial draft\n",
+            newText:
+              "## Release Notes\n- Initial draft\n- Added telemetry milestones\n",
+          },
+        ],
+      },
+    },
+    {
+      sessionId: "test-session-id",
+      update: {
+        sessionUpdate: "agent_message_chunk",
+        content: {
+          type: "resource_link",
+          name: "release-plan.md",
+          title: "release-plan.md",
+          uri: "file:///workspace/release-plan.md",
+          description: "Updated plan",
+        },
+      },
+    },
+    {
+      sessionId: "test-session-id",
+      update: {
+        sessionUpdate: "agent_message_chunk",
+        content: {
+          type: "text",
+          text: "Release plan updated with telemetry milestones.",
+        },
+      },
+    },
+  ];
+}
