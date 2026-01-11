@@ -72,10 +72,13 @@ class PreprogrammedAcpClient extends DisposableBase implements AcpClient {
   public readonly onSessionUpdate: vscode.Event<SessionNotification> =
     this.onSessionUpdateEmitter.event;
 
-  private readonly onDidStopEmitter = this._register(
+  private readonly _onDidStop = this._register(new vscode.EventEmitter<void>());
+  public readonly onDidStop: vscode.Event<void> = this._onDidStop.event;
+
+  private readonly _onDidStart = this._register(
     new vscode.EventEmitter<void>(),
   );
-  public readonly onDidStop: vscode.Event<void> = this.onDidStopEmitter.event;
+  public readonly onDidStart: vscode.Event<void> = this._onDidStart.event;
 
   private readonly promptPrograms = new Map<
     string,
@@ -127,6 +130,8 @@ class PreprogrammedAcpClient extends DisposableBase implements AcpClient {
         this.cwd = cwd;
       }
     }
+
+    this._onDidStart.fire();
 
     return {
       sessionId: this.sessionId,
@@ -251,7 +256,7 @@ class PreprogrammedAcpClient extends DisposableBase implements AcpClient {
 
   dispose(): void {
     this.onSessionUpdateEmitter.dispose();
-    this.onDidStopEmitter.dispose();
+    this._onDidStop.dispose();
     super.dispose();
   }
 

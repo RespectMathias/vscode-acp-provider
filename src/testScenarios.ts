@@ -12,6 +12,32 @@ export function createTestAcpClientWithScenarios(
     promptPrograms: [],
     session: {
       sessionId: "test-session-id",
+      models: {
+        availableModels: [
+          {
+            modelId: "gpt-4",
+            name: "GPT-4",
+          },
+          {
+            modelId: "gpt-3.5-turbo",
+            name: "GPT-3.5 Turbo",
+          },
+        ],
+        currentModelId: "gpt-4",
+      },
+      modes: {
+        availableModes: [
+          {
+            id: "plan",
+            name: "Plan",
+          },
+          {
+            id: "build",
+            name: "Build",
+          },
+        ],
+        currentModeId: "plan",
+      },
     },
     agentCapabilities: {
       loadSession: true,

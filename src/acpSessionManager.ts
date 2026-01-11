@@ -7,6 +7,7 @@ import { createSessionUri, decodeVscodeResource } from "./chatIdentifiers";
 import { DisposableBase } from "./disposables";
 import { getWorkspaceCwd } from "./permittedPaths";
 import { TurnBuilder } from "./turnBuilder";
+import { SessionModelState, SessionModeState } from "@agentclientprotocol/sdk";
 
 export class Session {
   private _status: ChatSessionStatus;
@@ -62,10 +63,15 @@ export class Session {
   }
 }
 
+export type Options = {
+  modes: SessionModeState | null;
+  models: SessionModelState | null;
+};
+
 export interface AcpSessionManager extends vscode.Disposable {
   onDidChangeSession: vscode.Event<{ original: Session; modified: Session }>;
+  onDidOptionsChange: vscode.Event<void>;
 
-  getDefault(): Promise<Session>;
   createOrGet(vscodeResource: vscode.Uri): Promise<{
     session: Session;
     history?: Array<vscode.ChatRequestTurn2 | vscode.ChatResponseTurn2>;
@@ -77,6 +83,7 @@ export interface AcpSessionManager extends vscode.Disposable {
     vscodeResource: vscode.Uri,
     modified: Session,
   ): Promise<void>;
+  getOptions(): Promise<Options>;
 }
 
 export function createAcpSessionManager(
@@ -95,8 +102,6 @@ export function createAcpSessionManager(
   );
 }
 
-const DEFAULT_SESSION_ID = "default";
-
 class SessionManager extends DisposableBase implements AcpSessionManager {
   private readonly client: AcpClient;
   constructor(
@@ -109,6 +114,12 @@ class SessionManager extends DisposableBase implements AcpSessionManager {
   ) {
     super();
     this.client = this._register(clientProvider());
+
+    this._register(
+      this.client.onDidStart(() => {
+        this._onDidChangeOptions.fire();
+      }),
+    );
 
     this._register(
       this.sessionDb.onDataChanged(async () => {
@@ -130,38 +141,17 @@ class SessionManager extends DisposableBase implements AcpSessionManager {
   }>();
   onDidChangeSession: vscode.Event<{ original: Session; modified: Session }> =
     this._onDidChangeSession.event;
+
+  private readonly _onDidChangeOptions: vscode.EventEmitter<void> =
+    new vscode.EventEmitter<void>();
+  onDidOptionsChange: vscode.Event<void> = this._onDidChangeOptions.event;
   // end event definitions --------------------------------------------------
 
-  private defaultSession: Session | null = null;
   private diskSessions: Map<string, DiskSession> | null = null;
   private activeSessions: Map<string, Session> = new Map();
 
   private createSessionUri(sessionId: string): vscode.Uri {
     return createSessionUri(this.agent.id, sessionId);
-  }
-
-  async getDefault(cwd: string = getWorkspaceCwd()): Promise<Session> {
-    if (this.defaultSession) {
-      return this.defaultSession;
-    }
-
-    // create new default session
-    this.logger.info(`Creating default session for agent ${this.agent.id}`);
-    const acpSession = await this.client.createSession(cwd);
-
-    this.defaultSession = new Session(
-      this.agent,
-      this.createSessionUri(DEFAULT_SESSION_ID),
-      this.client,
-      acpSession.sessionId,
-      {
-        modeId: acpSession.modes?.currentModeId || "",
-        modelId: acpSession.models?.currentModelId || "",
-      },
-    );
-    await this.client.cancel(this.defaultSession.acpSessionId);
-
-    return this.defaultSession;
   }
 
   async createOrGet(vscodeResource: vscode.Uri): Promise<{
@@ -304,6 +294,12 @@ class SessionManager extends DisposableBase implements AcpSessionManager {
     });
   }
 
+  async getOptions(): Promise<Options> {
+    const modes = this.client.getSupportedModeState();
+    const models = this.client.getSupportedModelState();
+    return { modes, models };
+  }
+
   private async loadDiskSessionsIfNeeded(
     reload: boolean = false,
   ): Promise<void> {
@@ -317,7 +313,6 @@ class SessionManager extends DisposableBase implements AcpSessionManager {
 
   dispose(): void {
     this.activeSessions.clear();
-    this.defaultSession = null;
     this.diskSessions?.clear();
     this._onDidChangeSession.dispose();
   }

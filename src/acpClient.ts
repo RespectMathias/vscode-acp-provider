@@ -51,6 +51,8 @@ const CLIENT_INFO = {
 export interface AcpClient extends Client, vscode.Disposable {
   onSessionUpdate: vscode.Event<SessionNotification>;
   onDidStop: vscode.Event<void>;
+  onDidStart: vscode.Event<void>;
+
   getCapabilities(): AgentCapabilities;
   createSession(cwd: string): Promise<NewSessionResponse>;
   getSupportedModelState(): SessionModelState | null;
@@ -96,6 +98,11 @@ class AcpClientImpl extends DisposableBase implements AcpClient {
   );
   public readonly onDidStop: vscode.Event<void> = this.onDidStopEmitter.event;
 
+  private readonly onDidStartEmitter = this._register(
+    new vscode.EventEmitter<void>(),
+  );
+  public readonly onDidStart: vscode.Event<void> = this.onDidStartEmitter.event;
+
   constructor(
     private readonly agent: AgentRegistryEntry,
     private readonly permissionHandler: AcpPermissionHandler,
@@ -135,6 +142,8 @@ class AcpClientImpl extends DisposableBase implements AcpClient {
       await this.connection.newSession(request);
     this.supportedModeState = response.modes || null;
     this.supportedModelState = response.models || null;
+
+    this.onDidStartEmitter.fire();
 
     return response;
   }

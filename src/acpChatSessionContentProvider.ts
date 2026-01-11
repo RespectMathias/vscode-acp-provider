@@ -2,7 +2,7 @@
 import * as vscode from "vscode";
 import { Uri } from "vscode";
 import { AcpChatParticipant } from "./acpChatParticipant";
-import { AcpSessionManager, Session } from "./acpSessionManager";
+import { AcpSessionManager, Options, Session } from "./acpSessionManager";
 import { DisposableBase } from "./disposables";
 import { VscodeSessionOptions } from "./types";
 
@@ -16,6 +16,12 @@ export class AcpChatSessionContentProvider
     private readonly logChannel: vscode.LogOutputChannel,
   ) {
     super();
+
+    this._register(
+      sessionManager.onDidOptionsChange(() => {
+        this._onDidChangeChatSessionProviderOptions.fire();
+      }),
+    );
   }
 
   // start event definitions --------------------------------------------------
@@ -23,6 +29,11 @@ export class AcpChatSessionContentProvider
     new vscode.EventEmitter<vscode.ChatSessionOptionChangeEvent>();
   onDidChangeChatSessionOptions?: vscode.Event<vscode.ChatSessionOptionChangeEvent> =
     this._onDidChangeChatSessionOptions.event;
+
+  private readonly _onDidChangeChatSessionProviderOptions: vscode.EventEmitter<void> =
+    new vscode.EventEmitter<void>();
+  onDidChangeChatSessionProviderOptions?: vscode.Event<void> | undefined =
+    this._onDidChangeChatSessionProviderOptions.event;
   // end event definitions -----------------------------------------------------
 
   async provideChatSessionContent(
@@ -47,22 +58,24 @@ export class AcpChatSessionContentProvider
     return session;
   }
 
-  // Currently in 1.108.0-insider this api is only called once when the provider is registered.
-  // so we create a session and use the information from that. The same session will be used later for first providing content api call.
-  async provideChatSessionProviderOptions(): Promise<vscode.ChatSessionProviderOptions> {
-    return this.sessionManager
-      .getDefault()
-      .then((session) => this.buildOptionsGroup(session));
+  provideChatSessionProviderOptions(
+    token: vscode.CancellationToken,
+  ):
+    | Thenable<vscode.ChatSessionProviderOptions>
+    | vscode.ChatSessionProviderOptions {
+    return this.sessionManager.getOptions().then((options) => {
+      return this.buildOptionsGroup(options);
+    });
   }
 
   private buildOptionsGroup(
-    session: Session,
+    options: Options,
   ): vscode.ChatSessionProviderOptions {
     const responseOptions: vscode.ChatSessionProviderOptions = {
       optionGroups: [],
     };
 
-    const modeState = session?.client.getSupportedModeState();
+    const modeState = options.modes;
     if (modeState) {
       const modeOptions: vscode.ChatSessionProviderOptionItem[] =
         modeState.availableModes.map((mode) => ({
@@ -78,7 +91,7 @@ export class AcpChatSessionContentProvider
       });
     }
 
-    const modelState = session?.client.getSupportedModelState();
+    const modelState = options.models;
     if (modelState) {
       const modelOptions: vscode.ChatSessionProviderOptionItem[] =
         modelState.availableModels.map((model) => ({
@@ -123,6 +136,7 @@ export class AcpChatSessionContentProvider
 
   override dispose(): void {
     this._onDidChangeChatSessionOptions.dispose();
+    this._onDidChangeChatSessionProviderOptions.dispose();
     super.dispose();
   }
 }
