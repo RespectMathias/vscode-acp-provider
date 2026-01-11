@@ -19,6 +19,7 @@ export function createTestAcpClientWithScenarios(
   addAskForPermissionAndGetWeather(config);
   addToolCallFailure(config);
   addToolCallSuccess(config);
+  addToolCallDiffPreview(config);
 
   return createPreprogrammedAcpClient(config);
 }
@@ -218,3 +219,54 @@ function addToolCallSuccess(config: PreprogrammedConfig) {
     },
   });
 }
+
+function addToolCallDiffPreview(config: PreprogrammedConfig) {
+  config.promptPrograms?.push({
+    promptText: "update file",
+    notifications: {
+      prompt: [
+        {
+          sessionId: "test-session-id",
+          update: {
+            sessionUpdate: "tool_call",
+            toolCallId: "diff_tool_call_1",
+            title: "Update src/index.ts",
+            rawInput: {
+              command: ["apply_patch", "src/index.ts"],
+            },
+            status: "in_progress",
+          },
+        },
+        {
+          sessionId: "test-session-id",
+          update: {
+            sessionUpdate: "tool_call_update",
+            toolCallId: "diff_tool_call_1",
+            content: [
+              {
+                type: "diff",
+                path: "src/index.ts",
+                oldText: "export const value = 1;\n",
+                newText:
+                  "export const value = 1;\nexport const greeting = 'hello world';\n",
+              },
+            ],
+            status: "completed",
+          },
+        },
+        {
+          sessionId: "test-session-id",
+          update: {
+            sessionUpdate: "agent_message_chunk",
+            content: {
+              type: "text",
+              text: "I've added a new greeting export to src/index.ts.",
+            },
+          },
+        },
+      ],
+    },
+  });
+}
+
+
