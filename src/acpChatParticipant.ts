@@ -2,6 +2,7 @@
 import {
   ContentBlock,
   SessionNotification,
+  ToolCall,
   ToolCallUpdate,
 } from "@agentclientprotocol/sdk";
 import * as vscode from "vscode";
@@ -43,6 +44,7 @@ export class AcpChatParticipant extends DisposableBase {
       complete: (
         value: string | PromiseLike<string | undefined> | undefined,
       ) => void;
+      title: string;
     }
   >();
 
@@ -457,35 +459,16 @@ ${lines.join("\n")}`
         break;
       }
       case "tool_call": {
-        const toolCallText = update.title;
-        if (toolCallText) {
-          let icon = "🔧";
-          switch (update.kind) {
-            case "read":
-              icon = "📖";
-              break;
-            case "edit":
-              icon = "✏️";
-              break;
-            case "execute":
-              icon = "⚙️";
-              break;
-            case "search":
-              icon = "🔍";
-              break;
-            case "delete":
-              icon = "🗑️";
-              break;
-          }
-          response.progress(`${icon} ${toolCallText}`, (progress) => {
-            return new Promise<string | undefined>((resolve) => {
-              this.toolCallProgressMap.set(update.toolCallId, {
-                reporter: progress,
-                complete: resolve,
-              });
+        const info = this.getToolInfo(update);
+        response.progress(info.name, (progress) => {
+          return new Promise<string | undefined>((resolve) => {
+            this.toolCallProgressMap.set(update.toolCallId, {
+              reporter: progress,
+              complete: resolve,
+              title: info.name
             });
           });
-        }
+        });
         break;
       }
       case "tool_call_update": {
@@ -494,12 +477,12 @@ ${lines.join("\n")}`
             update.toolCallId,
           );
           if (toolCallProgress) {
-            const toolInfo = this.getToolInfo(update);
-            toolCallProgress.complete(
-              ` ${update.status === "completed" ? "✅" : "❌"} ${toolInfo.input} -> ${
-                toolInfo.output?.substring(0, 100) || "No output"
-              }... `,
-            );
+            const info = this.getToolInfo(update);
+            toolCallProgress.complete(toolCallProgress.title);
+
+            // log input and ouput information into log
+            this.logger.info(`[tool_call] ${toolCallProgress.title} \n Input: ${info.input ?? "N/A"} \n Output: ${info.output ?? "N/A"}\n Status: ${update.status} \n\n`);
+
             this.toolCallProgressMap.delete(update.toolCallId);
           }
         }
@@ -581,7 +564,7 @@ ${lines.join("\n")}`
     return undefined;
   }
 
-  private getToolInfo(toolCallUpdate: ToolCallUpdate): ToolInfo {
+  private getToolInfo(toolCallUpdate: ToolCallUpdate | ToolCall): ToolInfo {
     const response: ToolInfo = {
       name: toolCallUpdate.title || "",
     };
@@ -644,7 +627,7 @@ ${lines.join("\n")}`
         ) {
           response.output = toolCallUpdate.rawOutput.aggregated_output;
         } else {
-          response.output = `\`\`\`json\n${JSON.stringify(toolCallUpdate.rawOutput, null, 2)}\n\`\`\``;
+          response.output = `${JSON.stringify(toolCallUpdate.rawOutput, null, 2)}`;
         }
       } else {
         toolCallUpdate.content
