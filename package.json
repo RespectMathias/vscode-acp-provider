@@ -45,7 +45,21 @@
         "displayName": "OpenCode Agent [ACP]",
         "description": "Chat sessions backed by the OpenCode ACP agent",
         "icon": "$(hubot)",
-        "when": "config.acpClient.agents.opencode.enabled"
+        "when": "config.acpClient.agents.opencode.enabled",
+        "commands": [
+          {
+            "name": "undo",
+            "description": "Undo the changes"
+          },
+          {
+            "name": "redo",
+            "description": "Redo the changes"
+          },
+          {
+            "name": "compact",
+            "description": "Compact the current session"
+          }
+        ]
       },
       {
         "name": "codex",
