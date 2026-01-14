@@ -14,11 +14,13 @@ import { buildDiffMarkdown, getToolInfo } from "./chatRenderingUtils";
 export class TurnBuilder {
   private currentUserMessage = "";
   private currentUserReferences: vscode.ChatPromptReference[] = [];
-  private currentAgentParts: vscode.ChatResponsePart[] = [];
+  private currentAgentParts: (vscode.ChatResponsePart | vscode.ChatToolInvocationPart)[] = [];
   private currentAgentMetadata: Record<string, unknown> = {};
   private agentMessageChunks: string[] = [];
   private turns: Array<vscode.ChatRequestTurn2 | vscode.ChatResponseTurn2> = [];
   private readonly participantId: string;
+  private readonly toolTitles = new Map<string, string>();
+
 
   constructor(participantId: string) {
     this.participantId = participantId;
@@ -56,7 +58,7 @@ export class TurnBuilder {
       case "tool_call": {
         this.flushPendingUserMessage();
         this.flushAgentMessageChunksToMarkdown();
-        this.appendToolStatus(update as ToolCall, "running");
+        this.appendToolCall(update as ToolCall);
         break;
       }
 
@@ -118,12 +120,9 @@ export class TurnBuilder {
     }
   }
 
-  private appendToolStatus(update: ToolCall, stateLabel: string): void {
+  private appendToolCall(update: ToolCall): void {
     const info = getToolInfo(update);
-    const title = info.name || update.toolCallId || "tool";
-    const markdown = new vscode.MarkdownString();
-    markdown.appendMarkdown(`🔧 **${title}** (${stateLabel})`);
-    this.currentAgentParts.push(new vscode.ChatResponseMarkdownPart(markdown));
+    this.toolTitles.set(update.toolCallId, info.name);
   }
 
   private appendToolUpdate(update: ToolCallUpdate): void {
@@ -131,19 +130,8 @@ export class TurnBuilder {
       return;
     }
 
-    const info = getToolInfo(update);
-    const title = info.name || update.toolCallId || "tool";
-    const markdown = new vscode.MarkdownString();
-    markdown.appendMarkdown(
-      `🔧 **${title}** (${update.status === "completed" ? "completed" : "failed"})`,
-    );
-    if (info.input) {
-      markdown.appendMarkdown(`\n**Input**\n\n${info.input}`);
-    }
-    if (info.output) {
-      markdown.appendMarkdown(`\n**Output**\n\n${info.output}`);
-    }
-    this.currentAgentParts.push(new vscode.ChatResponseMarkdownPart(markdown));
+    const toolName = this.toolTitles.get(update.toolCallId) ?? "unknown tool call";
+    this.currentAgentParts.push(new vscode.ChatToolInvocationPart(toolName, update.toolCallId, update.status === "failed")); 
 
     if (!update.content?.length) {
       return;

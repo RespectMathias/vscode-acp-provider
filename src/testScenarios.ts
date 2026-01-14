@@ -348,8 +348,11 @@ function addResumeSessionScenario(config: PreprogrammedConfig) {
       update: {
         sessionUpdate: "user_message_chunk",
         content: {
-          type: "text",
-          text: " with telemetry milestones",
+          type: "resource",
+          resource: {
+            uri: "file:///workspace/release-plan.md",
+            text: "release-plan.md",
+          }
         },
       },
     },
@@ -387,6 +390,43 @@ function addResumeSessionScenario(config: PreprogrammedConfig) {
             content: "Draft release notes",
             priority: "medium",
             status: "pending",
+          },
+        ],
+      },
+    },
+    {
+      sessionId: "test-session-id",
+      update: {
+        sessionUpdate: "tool_call",
+        toolCallId: "gather_telemetry",
+        title: "Gather Telemetry Data",
+        rawInput: {
+          command: ["webfetch https://internal.api/telemetry"],
+        },
+        status: "in_progress",
+      },
+    },
+    {
+      sessionId: "test-session-id",
+      update: {
+        sessionUpdate: "tool_call_update",
+        toolCallId: "gather_telemetry",
+        status: "completed",
+        rawInput: {
+          command: ["webfetch https://internal.api/telemetry"],
+        },
+        rawOutput: {
+          aggregated_output:
+            "Telemetry data collected: CPU usage, Memory usage, Disk I/O",
+        },
+        content: [
+          {
+            type: "content",
+            content: {
+              type: "text",
+              text:
+                "Telemetry data collected: CPU usage, Memory usage, Disk I/O",
+            },
           },
         ],
       },
