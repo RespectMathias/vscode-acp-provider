@@ -54,7 +54,7 @@ export class AcpChatParticipant extends DisposableBase {
     if (!session) {
       // Log minimal diagnostics to help debugging when resources don't match
       console.warn(
-        "[acp] No chat session found for resource:",
+        "No chat session found for resource:",
         sessionResource,
         typeof sessionResource,
       );
@@ -134,7 +134,7 @@ export class AcpChatParticipant extends DisposableBase {
 
       // Log detailed stop reason to the ACP Output channel for troubleshooting.
       this.logger.info(
-        `[debug] ACP agent finished with stop reason: ${result.stopReason}`,
+        `ACP agent finished with stop reason: ${result.stopReason}`,
       );
     } catch (error) {
       if (token.isCancellationRequested) {

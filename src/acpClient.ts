@@ -25,7 +25,6 @@ import {
 import { ChildProcessWithoutNullStreams, spawn } from "node:child_process";
 import { Readable, Writable } from "node:stream";
 import * as vscode from "vscode";
-import { AcpSessionReader, createSessionReader } from "./acpSessionReader";
 import { AgentRegistryEntry } from "./agentRegistry";
 import type { AcpMcpServerConfiguration } from "./types";
 import { DisposableBase } from "./disposables";
@@ -101,9 +100,7 @@ class AcpClientImpl extends DisposableBase implements AcpClient {
   public readonly onSessionUpdate: vscode.Event<SessionNotification> =
     this.onSessionUpdateEmitter.event;
 
-  private readonly _onDidStop = this._register(
-    new vscode.EventEmitter<void>(),
-  );
+  private readonly _onDidStop = this._register(new vscode.EventEmitter<void>());
   public readonly onDidStop: vscode.Event<void> = this._onDidStop.event;
 
   private readonly _onDidStart = this._register(
@@ -307,9 +304,7 @@ class AcpClientImpl extends DisposableBase implements AcpClient {
       stdio: ["pipe", "pipe", "pipe"],
     });
     agentProc.stderr?.on("data", (data) => {
-      this.logChannel.debug(
-        `agent:${this.agent.id} ${data.toString().trim()}`,
-      );
+      this.logChannel.debug(`agent:${this.agent.id} ${data.toString().trim()}`);
     });
     agentProc.on("exit", async (code) => {
       this.logChannel.debug(
@@ -328,7 +323,9 @@ class AcpClientImpl extends DisposableBase implements AcpClient {
 
   private async createConnection(mode: ClientMode): Promise<void> {
     await this.ensureAgentRunning();
-    const stdinStream = this.agentProcess?.stdin ? Writable.toWeb(this.agentProcess.stdin) : undefined;
+    const stdinStream = this.agentProcess?.stdin
+      ? Writable.toWeb(this.agentProcess.stdin)
+      : undefined;
     const stdoutStream = this.agentProcess?.stdout
       ? Readable.toWeb(this.agentProcess.stdout)
       : undefined;

@@ -14,7 +14,7 @@ export class DisposableBase implements vscode.Disposable {
       try {
         this._disposables.pop()?.dispose();
       } catch (error) {
-        console.error("[acp] Failed to dispose resource", error);
+        console.error("Failed to dispose resource", error);
       }
     }
   }
