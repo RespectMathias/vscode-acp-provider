@@ -49,7 +49,7 @@ import * as vscode from "vscode";
 import { AgentRegistryEntry } from "./agentRegistry";
 import type { AcpMcpServerConfiguration } from "./types";
 import { DisposableBase } from "./disposables";
-import { getWorkspaceCwd, resolveWorkspacePath } from "./permittedPaths";
+import { getWorkspaceCwd, resolveWorkspacePathSecure } from "./permittedPaths";
 
 export interface AcpPermissionHandler {
   requestPermission(
@@ -302,7 +302,10 @@ class AcpClientImpl extends DisposableBase implements AcpClient {
     params: ReadTextFileRequest,
   ): Promise<ReadTextFileResponse> {
     this.ensureWorkspaceOpen();
-    const resolvedPath = this.resolveWorkspacePathOrThrow(params.path);
+    const resolvedPath = await this.resolveWorkspacePathOrThrow(
+      params.path,
+      "read",
+    );
     try {
       const data = await vscode.workspace.fs.readFile(
         vscode.Uri.file(resolvedPath),
@@ -333,7 +336,10 @@ class AcpClientImpl extends DisposableBase implements AcpClient {
       `Allow agent to write ${params.path}?`,
       { path: params.path, bytes: params.content?.length ?? 0 },
     );
-    const resolvedPath = this.resolveWorkspacePathOrThrow(params.path);
+    const resolvedPath = await this.resolveWorkspacePathOrThrow(
+      params.path,
+      "write",
+    );
     try {
       const dir = path.dirname(resolvedPath);
       await vscode.workspace.fs.createDirectory(vscode.Uri.file(dir));
@@ -358,9 +364,8 @@ class AcpClientImpl extends DisposableBase implements AcpClient {
       `Allow agent to run ${params.command}?`,
       { command: params.command, args: params.args ?? [], cwd: params.cwd },
     );
-    const cwd = params.cwd
-      ? this.resolveWorkspacePathOrThrow(params.cwd)
-      : getWorkspaceCwd();
+    const cwdInput = params.cwd ?? getWorkspaceCwd();
+    const cwd = await this.resolveWorkspacePathOrThrow(cwdInput, "cwd");
     const args = params.args ?? [];
     const env = this.mergeTerminalEnv(params.env);
 
@@ -475,8 +480,11 @@ class AcpClientImpl extends DisposableBase implements AcpClient {
     super.dispose();
   }
 
-  private resolveWorkspacePathOrThrow(requestPath: string): string {
-    const resolved = resolveWorkspacePath(requestPath);
+  private async resolveWorkspacePathOrThrow(
+    requestPath: string,
+    mode: "read" | "write" | "cwd",
+  ): Promise<string> {
+    const resolved = await resolveWorkspacePathSecure(requestPath, mode);
     if (!resolved) {
       if (!vscode.workspace.workspaceFolders?.length) {
         throw RequestError.invalidParams(undefined, "No workspace is open.");

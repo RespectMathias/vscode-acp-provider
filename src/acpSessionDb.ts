@@ -51,7 +51,6 @@ const createSessionDb = (
 
 class FileSessionDb implements SessionDb {
   private readonly storePath: string;
-  private cachedStore: SessionStore | null = null;
 
   constructor(
     private readonly context: vscode.ExtensionContext,
@@ -132,12 +131,7 @@ class FileSessionDb implements SessionDb {
   }
 
   private async loadStore(): Promise<SessionStore> {
-    if (this.cachedStore) {
-      return this.cachedStore;
-    }
-    const store = await this.readStore();
-    this.cachedStore = store;
-    return store;
+    return this.readStore();
   }
 
   private async readStore(): Promise<SessionStore> {
@@ -182,7 +176,6 @@ class FileSessionDb implements SessionDb {
       }
     }
 
-    this.cachedStore = store;
     if (notify) {
       this._onDataChanged.fire();
     }

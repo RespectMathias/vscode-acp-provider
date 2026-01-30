@@ -151,10 +151,7 @@ export class PermissionPromptManager
       this.resolvePrompt(pending.promptId, {
         outcome: { outcome: "selected", optionId: option.optionId },
       });
-      this.emitResultMessage(
-        pending,
-        `Permission granted: ${this.optionLabel(option)}`,
-      );
+      this.emitResultMessage(pending, this.formatResultMessage(option));
     } else {
       this.resolvePrompt(pending.promptId, {
         outcome: { outcome: "cancelled" },
@@ -262,6 +259,17 @@ export class PermissionPromptManager
 
   private emitResultMessage(pending: PendingPrompt, message: string): void {
     pending.context?.response.markdown(message);
+  }
+
+  private formatResultMessage(option: PermissionOption): string {
+    const label = this.optionLabel(option);
+    if (option.kind?.startsWith("allow")) {
+      return `Permission granted: ${label}`;
+    }
+    if (option.kind?.startsWith("reject")) {
+      return `Permission denied: ${label}`;
+    }
+    return `Permission response: ${label}`;
   }
 
   private createPromptId(sessionId: string): string {

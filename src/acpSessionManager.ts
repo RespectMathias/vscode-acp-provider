@@ -256,6 +256,24 @@ class SessionManager extends DisposableBase implements AcpSessionManager {
         return { session };
       }
     } else {
+      if (existingActive) {
+        this.logger.debug(
+          `Reusing active session for resource ${vscodeResource.toString()}`,
+        );
+        const response = await this.client.loadSession(
+          existingActive.acpSessionId,
+          existingActive.cwd,
+          this.agent.mcpServers,
+        );
+        existingActive.setModeId(response.modeId ?? "");
+        existingActive.setModelId(response.modelId ?? "");
+        const turnBuilder = new TurnBuilder(this.agent.id);
+        response.notifications.forEach((notification) =>
+          turnBuilder.processNotification(notification),
+        );
+        const history = turnBuilder.getTurns();
+        return { session: existingActive, history };
+      }
       const existingSession = await this.get(vscodeResource);
       if (existingSession) {
         this.logger.debug(
@@ -300,7 +318,7 @@ class SessionManager extends DisposableBase implements AcpSessionManager {
 
   async get(vscodeResource: vscode.Uri): Promise<DiskSession | undefined> {
     const decoded = decodeVscodeResource(vscodeResource);
-    await this.loadDiskSessionsIfNeeded();
+    await this.loadDiskSessionsIfNeeded(true);
 
     const session = this.diskSessions?.get(decoded.sessionId);
     return session;
@@ -312,7 +330,7 @@ class SessionManager extends DisposableBase implements AcpSessionManager {
   }
 
   async list(): Promise<ChatSessionItem[]> {
-    await this.loadDiskSessionsIfNeeded();
+    await this.loadDiskSessionsIfNeeded(true);
     if (!this.diskSessions) {
       return [];
     }
@@ -403,10 +421,12 @@ class SessionManager extends DisposableBase implements AcpSessionManager {
     reload: boolean = false,
   ): Promise<void> {
     if (!this.diskSessions || reload) {
-      const data = await this.sessionDb.listSessions(
-        this.agent.id,
-        getWorkspaceCwd(),
-      );
+      const cwd = getWorkspaceCwd();
+      if (!cwd) {
+        this.diskSessions = new Map();
+        return;
+      }
+      const data = await this.sessionDb.listSessions(this.agent.id, cwd);
       this.diskSessions = new Map<string, DiskSession>(
         data.map((s) => [s.sessionId, s]),
       );

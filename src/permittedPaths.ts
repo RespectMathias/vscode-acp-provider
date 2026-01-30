@@ -1,4 +1,5 @@
 // SPDX-License-Identifier: Apache-2.0
+import fs from "fs";
 import path from "path";
 import * as vscode from "vscode";
 
@@ -46,10 +47,99 @@ export function resolveWorkspacePath(targetPath: string): string | undefined {
   return resolved;
 }
 
+export async function resolveWorkspacePathSecure(
+  targetPath: string,
+  mode: "read" | "write" | "cwd",
+): Promise<string | undefined> {
+  const resolved = resolveWorkspacePath(targetPath);
+  if (!resolved) {
+    return undefined;
+  }
+
+  const roots = getWorkspaceRoots();
+  if (roots.length === 0) {
+    return undefined;
+  }
+
+  const rootRealpaths = await Promise.all(
+    roots.map(async (root) => {
+      try {
+        return await fs.promises.realpath(root);
+      } catch {
+        return root;
+      }
+    }),
+  );
+
+  const isWithinRealRoot = (candidate: string): boolean =>
+    rootRealpaths.some((root) => isWithin(root, candidate));
+
+  if (mode === "read") {
+    try {
+      const realTarget = await fs.promises.realpath(resolved);
+      if (!isWithinRealRoot(realTarget)) {
+        return undefined;
+      }
+    } catch (error) {
+      if ((error as NodeJS.ErrnoException).code !== "ENOENT") {
+        return undefined;
+      }
+      const existingPath = await findExistingPath(resolved);
+      if (!existingPath) {
+        return undefined;
+      }
+      try {
+        const realExisting = await fs.promises.realpath(existingPath);
+        if (!isWithinRealRoot(realExisting)) {
+          return undefined;
+        }
+      } catch {
+        return undefined;
+      }
+    }
+    return resolved;
+  }
+
+  const existingPath = await findExistingPath(resolved);
+  if (!existingPath) {
+    return undefined;
+  }
+
+  try {
+    const realExisting = await fs.promises.realpath(existingPath);
+    if (!isWithinRealRoot(realExisting)) {
+      return undefined;
+    }
+  } catch {
+    return undefined;
+  }
+
+  return resolved;
+}
+
 function isWithin(root: string, target: string): boolean {
   const relative = path.relative(path.resolve(root), path.resolve(target));
   if (!relative) {
     return true;
   }
   return !relative.startsWith("..") && !path.isAbsolute(relative);
+}
+
+async function findExistingPath(target: string): Promise<string | undefined> {
+  let current = target;
+  while (true) {
+    try {
+      await fs.promises.stat(current);
+      return current;
+    } catch (error) {
+      if ((error as NodeJS.ErrnoException).code !== "ENOENT") {
+        return undefined;
+      }
+      const parent = path.dirname(current);
+      if (parent === current) {
+        return undefined;
+      }
+      current = parent;
+    }
+  }
 }
