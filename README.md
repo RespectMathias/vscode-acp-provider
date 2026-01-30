@@ -27,7 +27,7 @@ Add ACP agents under the `acpClient.agents` setting (User or Workspace) to surfa
 ```json
 "acpClient.agents": {
   "cagent": {
-    "title": "Docker cagent",
+    "label": "Docker cagent",
     "command": "/opt/bin/cagent",
     "args": [
       "acp",
@@ -47,7 +47,7 @@ Add ACP agents under the `acpClient.agents` setting (User or Workspace) to surfa
     "enabled": false
   },
   "opencode": {
-    "title": "OpenCode Agent",
+    "label": "OpenCode Agent",
     "command": "/opt/bin/opencode",
     "args": [
       "acp"

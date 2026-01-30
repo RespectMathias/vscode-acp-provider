@@ -12,7 +12,14 @@ export function registerCommands(
   context.subscriptions.push(
     vscode.commands.registerCommand("acp.clearSessions", async () => {
       try {
-        await dependencies.sessionDb.deleteAllSessions(getWorkspaceCwd());
+        const cwd = getWorkspaceCwd();
+        if (!cwd) {
+          vscode.window.showWarningMessage(
+            "Open a workspace to clear ACP sessions.",
+          );
+          return;
+        }
+        await dependencies.sessionDb.deleteAllSessions(cwd);
         vscode.window.showInformationMessage(
           "All ACP sessions have been cleared.",
         );
