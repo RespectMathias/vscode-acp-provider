@@ -215,14 +215,14 @@
   },
   "scripts": {
     "clean": "rm -rf ./out",
-    "vscode:prepublish": "npm run clean && npm run compile",
+    "build": "bun run clean && bun run compile",
     "compile": "tsc -p ./",
     "watch": "tsc -watch -p ./",
-    "pretest": "npm run compile",
-    "lint": "npx prettier . --check",
-    "format": "npx prettier . --write",
-    "package": "vsce package",
-    "install-dts": "npx @vscode/dts dev"
+    "pretest": "bun run compile",
+    "lint": "bunx prettier . --check",
+    "format": "bunx prettier . --write",
+    "package": "bun run build && vsce package --allow-star-activation --no-dependencies",
+    "install-dts": "bunx @vscode/dts dev"
   },
   "devDependencies": {
     "@types/node": "^25.0.1",
