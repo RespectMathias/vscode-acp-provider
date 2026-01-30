@@ -17,5 +17,8 @@
 
 ## Specifications
 
+- ACP (Agent Client Protocol) : <https://agentclientprotocol.com/protocol/schema>
+- VSCode Extension API: <https://code.visualstudio.com/api/references/vscode-api>
+- VSCode Proposed API: <https://code.visualstudio.com/api/advanced-topics/using-proposed-api>
 - ACP (Agent Client Protocol) : https://agentclientprotocol.com/protocol/schema
 - VSCode Extension API: https://code.visualstudio.com/api/references/vscode-api

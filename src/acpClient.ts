@@ -22,6 +22,13 @@ import {
   SetSessionModelRequest,
   SetSessionModeRequest,
 } from "@agentclientprotocol/sdk";
+import {
+  ChildProcess,
+  ChildProcessWithoutNullStreams,
+  spawn,
+} from "node:child_process";
+import path from "path";
+import { TextDecoder, TextEncoder } from "node:util";
 import { ChildProcessWithoutNullStreams, spawn } from "node:child_process";
 import { Readable, Writable } from "node:stream";
 import * as vscode from "vscode";
@@ -93,6 +100,13 @@ class AcpClientImpl extends DisposableBase implements AcpClient {
   private agentCapabilities?: InitializeResponse;
   private supportedModelState: SessionModelState | null = null;
   private supportedModeState: SessionModeState | null = null;
+  private terminalIdCounter = 0;
+  private terminals = new Map<string, TerminalState>();
+  private readonly textEncoder = new TextEncoder();
+  private readonly textDecoder = new TextDecoder("utf-8");
+  private readonly allowedWriteSessions = new Set<string>();
+  private readonly allowedTerminalSessions = new Set<string>();
+  private permissionPromptCounter = 0;
 
   private readonly onSessionUpdateEmitter = this._register(
     new vscode.EventEmitter<SessionNotification>(),
@@ -154,12 +168,48 @@ class AcpClientImpl extends DisposableBase implements AcpClient {
     if (!this.connection) {
       throw new Error("ACP connection is not ready");
     }
+    // Use native path separators - opencode on Windows expects backslashes
+    // Converting to forward slashes makes opencode treat it as a different directory
     const request: NewSessionRequest = {
-      cwd,
+      cwd: cwd,
       mcpServers: serializeMcpServers(mcpServers),
     };
-    const response: NewSessionResponse =
-      await this.connection.newSession(request);
+    this.logChannel.info(`Calling session/new with cwd: ${cwd}`);
+
+    // Add 10 second timeout for faster failure feedback
+    const timeoutMs = 10_000;
+    let timeoutId: NodeJS.Timeout | null = null;
+    const timeoutPromise = new Promise<never>((_, reject) => {
+      timeoutId = setTimeout(() => {
+        this.logChannel.error(`session/new timeout fired after ${timeoutMs / 1000}s`);
+        reject(new Error(`session/new timed out after ${timeoutMs / 1000}s. Check the ACP Client output for opencode errors.`));
+      }, timeoutMs);
+      this.logChannel.info(`Timeout set for ${timeoutMs / 1000}s`);
+    });
+
+    this.logChannel.info(`Starting Promise.race for session/new...`);
+    const racers: Promise<NewSessionResponse>[] = [this.connection.newSession(request), timeoutPromise];
+    if (this.agentExitPromise) {
+      racers.push(this.agentExitPromise);
+    }
+
+    let response: NewSessionResponse;
+    try {
+      this.logChannel.info(`Awaiting Promise.race with ${racers.length} racers...`);
+      response = await Promise.race(racers);
+      this.logChannel.info(`Promise.race resolved successfully`);
+    } catch (error) {
+      this.logChannel.error(`Promise.race rejected: ${error instanceof Error ? error.message : String(error)}`);
+      if (timeoutId) clearTimeout(timeoutId);
+      // Kill the agent and reset connection on failure so next attempt starts fresh
+      this.logChannel.info(`Cleaning up agent process due to error...`);
+      await this.stopProcess();
+      throw error;
+    } finally {
+      if (timeoutId) clearTimeout(timeoutId);
+    }
+
+    this.logChannel.info(`session/new response received: sessionId=${response.sessionId}`);
     this.supportedModeState = response.modes || null;
     this.supportedModelState = response.models || null;
 
@@ -295,8 +345,18 @@ class AcpClientImpl extends DisposableBase implements AcpClient {
       return;
     }
     const args = Array.from(this.agent.args ?? []);
+    // Add --print-logs to see opencode's internal logs
+    if (!args.includes("--print-logs")) {
+      args.push("--print-logs");
+    }
+    this.logChannel.info(
+      `Starting agent: ${this.agent.command} ${args.join(" ")}`,
+    );
+    // Use workspace cwd instead of process.cwd() which would be VS Code's install dir
+    const effectiveCwd = this.agent.cwd ?? getWorkspaceCwd() ?? process.cwd();
+    this.logChannel.info(`Agent process cwd: ${effectiveCwd}`);
     const agentProc = spawn(this.agent.command, args, {
-      cwd: this.agent.cwd ?? process.cwd(),
+      cwd: effectiveCwd,
       env: {
         ...process.env,
         ...this.agent.env,
@@ -304,42 +364,137 @@ class AcpClientImpl extends DisposableBase implements AcpClient {
       stdio: ["pipe", "pipe", "pipe"],
     });
     agentProc.stderr?.on("data", (data) => {
-      this.logChannel.debug(`agent:${this.agent.id} ${data.toString().trim()}`);
+      // Log at info level so we can see opencode's internal logs
+      this.logChannel.info(`agent:${this.agent.id}:stderr ${data.toString().trim()}`);
     });
     agentProc.on("exit", async (code) => {
-      this.logChannel.debug(
+      this.logChannel.info(
         `agent:${this.agent.id} exited with code ${code ?? "unknown"}`,
       );
+      // Reject any pending operations when agent exits
+      if (this.agentExitReject) {
+        this.agentExitReject(new Error(`Agent process exited unexpectedly with code ${code ?? "unknown"}`));
+        this.agentExitReject = null;
+      }
+      this.connection = null;
+      this.readyPromise = null;
       this._onDidStop.fire();
     });
     agentProc.on("error", (error) => {
-      this.logChannel.debug(
+      this.logChannel.error(
         `agent:${this.agent.id} failed to start: ${error instanceof Error ? error.message : String(error)}`,
       );
-      // todo: emit agent proc error upstream
+      // Reject any pending operations when agent fails to start
+      if (this.agentExitReject) {
+        this.agentExitReject(error instanceof Error ? error : new Error(String(error)));
+        this.agentExitReject = null;
+      }
+    });
+
+    // Create a promise that rejects when the agent exits
+    this.agentExitPromise = new Promise<never>((_, reject) => {
+      this.agentExitReject = reject;
     });
     this.agentProcess = agentProc;
   }
 
   private async createConnection(mode: ClientMode): Promise<void> {
     await this.ensureAgentRunning();
-    const stdinStream = this.agentProcess?.stdin
-      ? Writable.toWeb(this.agentProcess.stdin)
-      : undefined;
-    const stdoutStream = this.agentProcess?.stdout
-      ? Readable.toWeb(this.agentProcess.stdout)
-      : undefined;
-    if (!stdinStream || !stdoutStream) {
+    this.logChannel.info(`Agent running, creating connection...`);
+    const proc = this.agentProcess;
+    if (!proc?.stdin || !proc?.stdout) {
       throw new Error("Failed to connect ACP client streams");
     }
+
+    // Create WritableStream that accepts Uint8Array and writes to stdin
+    const stdinStream = new WritableStream<Uint8Array>({
+      write: async (chunk) => {
+        const text = this.textDecoder.decode(chunk);
+        this.logChannel.info(
+          `Sending to agent (${chunk.length} bytes): ${text.substring(0, 200)}`,
+        );
+        return new Promise<void>((resolve, reject) => {
+          const ok = proc.stdin!.write(chunk, (err) => {
+            if (err) {
+              this.logChannel.error(`Write error: ${err.message}`);
+              reject(err);
+            } else {
+              resolve();
+            }
+          });
+          if (!ok) {
+            proc.stdin!.once("drain", resolve);
+          }
+        });
+      },
+      close: async () => {
+        return new Promise<void>((resolve) => {
+          proc.stdin!.end(() => resolve());
+        });
+      },
+      abort: async (reason) => {
+        proc.stdin!.destroy(
+          reason instanceof Error ? reason : new Error(String(reason)),
+        );
+      },
+    });
+
+    // Create ReadableStream that reads from stdout as Uint8Array
+    const stdoutStream = new ReadableStream<Uint8Array>({
+      start: (controller) => {
+        proc.stdout!.on("data", (chunk: Buffer) => {
+          const text = chunk.toString("utf8");
+          this.logChannel.info(
+            `Received from agent (${chunk.length} bytes): ${text.substring(0, 200)}`,
+          );
+          controller.enqueue(new Uint8Array(chunk));
+        });
+        proc.stdout!.on("end", () => {
+          this.logChannel.info(`Agent stdout ended`);
+          controller.close();
+        });
+        proc.stdout!.on("error", (err) => {
+          this.logChannel.error(`Agent stdout error: ${err.message}`);
+          controller.error(err);
+        });
+      },
+      cancel: () => {
+        proc.stdout!.destroy();
+      },
+    });
+
     const stream = ndJsonStream(stdinStream, stdoutStream);
     this.connection = new ClientSideConnection(() => this, stream);
 
-    const initResponse = await this.connection.initialize({
-      protocolVersion: PROTOCOL_VERSION,
-      clientCapabilities: CLIENT_CAPABILITIES,
-      clientInfo: CLIENT_INFO,
+    this.logChannel.info(`Sending initialize request...`);
+
+    // Add 120 second timeout for initialize
+    const initTimeoutMs = 120_000;
+    const initTimeoutPromise = new Promise<never>((_, reject) => {
+      setTimeout(() => reject(new Error(`initialize timed out after ${initTimeoutMs / 1000}s`)), initTimeoutMs);
     });
+
+    const initRacers: Promise<InitializeResponse>[] = [
+      this.connection.initialize({
+        protocolVersion: PROTOCOL_VERSION,
+        clientCapabilities: CLIENT_CAPABILITIES,
+        clientInfo: CLIENT_INFO,
+      }),
+      initTimeoutPromise,
+    ];
+    if (this.agentExitPromise) {
+      initRacers.push(this.agentExitPromise);
+    }
+
+    let initResponse: InitializeResponse;
+    try {
+      initResponse = await Promise.race(initRacers);
+    } catch (error) {
+      this.logChannel.error(`Initialize failed: ${error instanceof Error ? error.message : String(error)}`);
+      await this.stopProcess();
+      throw error;
+    }
+    this.logChannel.info(`Initialize response received`);
     this.agentCapabilities = initResponse.agentCapabilities;
     this._onDidStart.fire();
     this.mode = mode;
