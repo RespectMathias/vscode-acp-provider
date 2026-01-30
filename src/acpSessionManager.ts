@@ -141,15 +141,6 @@ class SessionManager extends DisposableBase implements AcpSessionManager {
         this._onDidChangeOptions.fire();
       }),
     );
-
-    this._register(
-      this.sessionDb.onDataChanged(async () => {
-        this.logger.info(
-          `Session DB data changed event received for agent ${this.agent.id}`,
-        );
-        await this.loadDiskSessionsIfNeeded(true);
-      }),
-    );
   }
 
   // start event definitions --------------------------------------------------
@@ -173,7 +164,6 @@ class SessionManager extends DisposableBase implements AcpSessionManager {
     this._onDidChangeSessionOptions.event;
   // end event definitions --------------------------------------------------
 
-  private diskSessions: Map<string, DiskSession> | null = null;
   private activeSessions: Map<string, Session> = new Map();
   private sessionAliases: Map<string, string> = new Map();
 
@@ -318,10 +308,12 @@ class SessionManager extends DisposableBase implements AcpSessionManager {
 
   async get(vscodeResource: vscode.Uri): Promise<DiskSession | undefined> {
     const decoded = decodeVscodeResource(vscodeResource);
-    await this.loadDiskSessionsIfNeeded(true);
-
-    const session = this.diskSessions?.get(decoded.sessionId);
-    return session;
+    const cwd = getWorkspaceCwd();
+    if (!cwd) {
+      return undefined;
+    }
+    const sessions = await this.sessionDb.listSessions(this.agent.id, cwd);
+    return sessions.find((session) => session.sessionId === decoded.sessionId);
   }
 
   getActive(vscodeResource: vscode.Uri): Session | undefined {
@@ -330,14 +322,16 @@ class SessionManager extends DisposableBase implements AcpSessionManager {
   }
 
   async list(): Promise<ChatSessionItem[]> {
-    await this.loadDiskSessionsIfNeeded(true);
-    if (!this.diskSessions) {
+    const cwd = getWorkspaceCwd();
+    if (!cwd) {
       return [];
     }
 
+    const sessions = await this.sessionDb.listSessions(this.agent.id, cwd);
+
     const chatSessionItems: ChatSessionItem[] = [];
-    for (const [sessionId, session] of this.diskSessions) {
-      const resource = this.createSessionUri(sessionId);
+    for (const session of sessions) {
+      const resource = this.createSessionUri(session.sessionId);
 
       chatSessionItems.push({
         label: session.title || session.sessionId,
@@ -417,25 +411,8 @@ class SessionManager extends DisposableBase implements AcpSessionManager {
     }
   }
 
-  private async loadDiskSessionsIfNeeded(
-    reload: boolean = false,
-  ): Promise<void> {
-    if (!this.diskSessions || reload) {
-      const cwd = getWorkspaceCwd();
-      if (!cwd) {
-        this.diskSessions = new Map();
-        return;
-      }
-      const data = await this.sessionDb.listSessions(this.agent.id, cwd);
-      this.diskSessions = new Map<string, DiskSession>(
-        data.map((s) => [s.sessionId, s]),
-      );
-    }
-  }
-
   dispose(): void {
     this.activeSessions.clear();
-    this.diskSessions?.clear();
     this._onDidChangeSession.dispose();
     this._onDidChangeOptions.dispose();
     this._onDidChangeSessionOptions.dispose();

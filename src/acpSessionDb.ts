@@ -66,7 +66,7 @@ class FileSessionDb implements SessionDb {
   // end event definitions -----------------------------------------------------
 
   async listSessions(agent: AgentType, cwd: string): Promise<DiskSession[]> {
-    const store = await this.loadStore();
+    const store = await this.readStore();
     return store.sessions
       .filter((session) => session.agent_type === agent && session.cwd === cwd)
       .sort((a, b) => b.updated_at - a.updated_at)
@@ -79,7 +79,7 @@ class FileSessionDb implements SessionDb {
   }
 
   async upsertSession(agent: AgentType, info: DiskSession): Promise<void> {
-    const store = await this.loadStore();
+    const store = await this.readStore();
     const existing = store.sessions.find(
       (session) =>
         session.agent_type === agent && session.session_id === info.sessionId,
@@ -102,7 +102,7 @@ class FileSessionDb implements SessionDb {
   }
 
   async deleteSession(agent: AgentType, sessionId: string): Promise<void> {
-    const store = await this.loadStore();
+    const store = await this.readStore();
     const nextSessions = store.sessions.filter(
       (session) =>
         !(session.agent_type === agent && session.session_id === sessionId),
@@ -115,7 +115,7 @@ class FileSessionDb implements SessionDb {
   }
 
   async deleteAllSessions(cwd: string): Promise<void> {
-    const store = await this.loadStore();
+    const store = await this.readStore();
     const nextSessions = store.sessions.filter(
       (session) => session.cwd !== cwd,
     );
@@ -128,10 +128,6 @@ class FileSessionDb implements SessionDb {
 
   dispose(): void {
     this._onDataChanged.dispose();
-  }
-
-  private async loadStore(): Promise<SessionStore> {
-    return this.readStore();
   }
 
   private async readStore(): Promise<SessionStore> {

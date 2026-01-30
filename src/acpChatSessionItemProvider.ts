@@ -22,6 +22,13 @@ class AcpChatSessionItemProvider
     private readonly logger: vscode.LogOutputChannel,
   ) {
     super();
+
+    this._register(
+      this.sessionDb.onDataChanged(() => {
+        this._onDidChangeChatSessionItems.fire();
+      }),
+    );
+
     this._register(
       this.sessionManager.onDidChangeSession(({ original, modified }) => {
         const originalItem: vscode.ChatSessionItem = {
