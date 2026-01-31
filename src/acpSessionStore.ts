@@ -11,7 +11,7 @@ export type DiskSession = {
   updatedAt: number;
 };
 
-export interface SessionDb extends vscode.Disposable {
+export interface SessionStore extends vscode.Disposable {
   onDataChanged: vscode.Event<void>;
   listSessions(agent: AgentType, cwd: string): Promise<DiskSession[]>;
   upsertSession(agent: AgentType, info: DiskSession): Promise<void>;
@@ -27,12 +27,12 @@ type DiskSessionRecord = {
   updated_at: number;
 };
 
-type SessionStore = {
+type SessionStoreData = {
   version: 1;
   sessions: DiskSessionRecord[];
 };
 
-const STORE_VERSION: SessionStore["version"] = 1;
+const STORE_VERSION: SessionStoreData["version"] = 1;
 
 function getAcpStorePath(context: vscode.ExtensionContext): string {
   const acpDir = path.join(context.globalStorageUri.fsPath, ".acp");
@@ -42,14 +42,14 @@ function getAcpStorePath(context: vscode.ExtensionContext): string {
   return path.join(acpDir, "acp-sessions.json");
 }
 
-const createSessionDb = (
+const createSessionStore = (
   context: vscode.ExtensionContext,
   logger: vscode.LogOutputChannel,
-): SessionDb => {
-  return new FileSessionDb(context, logger);
+): SessionStore => {
+  return new FileSessionStore(context, logger);
 };
 
-class FileSessionDb implements SessionDb {
+class FileSessionStore implements SessionStore {
   private readonly storePath: string;
 
   constructor(
@@ -130,10 +130,10 @@ class FileSessionDb implements SessionDb {
     this._onDataChanged.dispose();
   }
 
-  private async readStore(): Promise<SessionStore> {
+  private async readStore(): Promise<SessionStoreData> {
     try {
       const raw = await fs.promises.readFile(this.storePath, "utf8");
-      const parsed = JSON.parse(raw) as SessionStore;
+      const parsed = JSON.parse(raw) as SessionStoreData;
       if (!parsed || parsed.version !== STORE_VERSION) {
         return { version: STORE_VERSION, sessions: [] };
       }
@@ -153,7 +153,7 @@ class FileSessionDb implements SessionDb {
   }
 
   private async persistStore(
-    store: SessionStore,
+    store: SessionStoreData,
     notify: boolean = true,
   ): Promise<void> {
     const tempPath = `${this.storePath}.tmp`;
@@ -178,4 +178,4 @@ class FileSessionDb implements SessionDb {
   }
 }
 
-export { createSessionDb };
+export { createSessionStore };

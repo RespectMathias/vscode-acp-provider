@@ -1,7 +1,7 @@
 // SPDX-License-Identifier: Apache-2.0
 import vscode, { ChatSessionItem, ChatSessionStatus } from "vscode";
 import { AcpClient, AcpPermissionHandler, createAcpClient } from "./acpClient";
-import { DiskSession, SessionDb } from "./acpSessionDb";
+import { DiskSession, SessionStore } from "./acpSessionStore";
 import { AgentRegistryEntry } from "./agentRegistry";
 import { createSessionUri, decodeVscodeResource } from "./chatIdentifiers";
 import { DisposableBase } from "./disposables";
@@ -108,14 +108,14 @@ export interface AcpSessionManager extends vscode.Disposable {
 }
 
 export function createAcpSessionManager(
-  sessionDb: SessionDb,
+  sessionStore: SessionStore,
   agent: AgentRegistryEntry,
   permissionHandler: AcpPermissionHandler,
   logger: vscode.LogOutputChannel,
   clientProvider?: () => AcpClient,
 ): AcpSessionManager {
   return new SessionManager(
-    sessionDb,
+    sessionStore,
     agent,
     permissionHandler,
     logger,
@@ -126,7 +126,7 @@ export function createAcpSessionManager(
 class SessionManager extends DisposableBase implements AcpSessionManager {
   private readonly client: AcpClient;
   constructor(
-    private readonly sessionDb: SessionDb,
+    private readonly sessionStore: SessionStore,
     private readonly agent: AgentRegistryEntry,
     readonly permissionHandler: AcpPermissionHandler,
     private readonly logger: vscode.LogOutputChannel,
@@ -312,7 +312,7 @@ class SessionManager extends DisposableBase implements AcpSessionManager {
     if (!cwd) {
       return undefined;
     }
-    const sessions = await this.sessionDb.listSessions(this.agent.id, cwd);
+    const sessions = await this.sessionStore.listSessions(this.agent.id, cwd);
     return sessions.find((session) => session.sessionId === decoded.sessionId);
   }
 
@@ -327,7 +327,7 @@ class SessionManager extends DisposableBase implements AcpSessionManager {
       return [];
     }
 
-    const sessions = await this.sessionDb.listSessions(this.agent.id, cwd);
+    const sessions = await this.sessionStore.listSessions(this.agent.id, cwd);
 
     const chatSessionItems: ChatSessionItem[] = [];
     for (const session of sessions) {

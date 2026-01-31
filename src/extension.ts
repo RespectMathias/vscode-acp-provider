@@ -11,7 +11,7 @@ import {
   PermissionPromptManager,
 } from "./permissionPrompts";
 import { createAcpChatSessionItemProvider } from "./acpChatSessionItemProvider";
-import { createSessionDb, SessionDb } from "./acpSessionDb";
+import { createSessionStore, SessionStore } from "./acpSessionStore";
 import { createTestAcpClientWithScenarios } from "./testScenarios";
 import { AcpClient } from "./acpClient";
 import { registerCommands } from "./commands";
@@ -22,23 +22,23 @@ export async function activate(context: vscode.ExtensionContext) {
   });
   context.subscriptions.push(outputChannel);
 
-  const sessionDb = createSessionDb(context, outputChannel);
-  context.subscriptions.push(sessionDb);
+  const sessionStore = createSessionStore(context, outputChannel);
+  context.subscriptions.push(sessionStore);
 
   const agentRegistry = new AgentRegistry();
   registerAgents({
     registry: agentRegistry,
-    sessionDb,
+    sessionStore,
     outputChannel,
     context,
   });
 
-  registerCommands(context, { sessionDb }, outputChannel);
+  registerCommands(context, { sessionStore }, outputChannel);
 }
 
 function registerAgents(params: {
   registry: AgentRegistry;
-  sessionDb: SessionDb;
+  sessionStore: SessionStore;
   outputChannel: vscode.LogOutputChannel;
   context: vscode.ExtensionContext;
 }): void {
@@ -64,7 +64,7 @@ function registerAgents(params: {
     }
 
     const sessionManager = createAcpSessionManager(
-      params.sessionDb,
+      params.sessionStore,
       agent,
       permisionPromptsManager,
       outputChannel,
@@ -101,7 +101,7 @@ function registerAgents(params: {
 
     const sessionItemProvider = createAcpChatSessionItemProvider(
       sessionManager,
-      params.sessionDb,
+      params.sessionStore,
       outputChannel,
     );
     context.subscriptions.push(sessionItemProvider);
