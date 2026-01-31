@@ -2,5 +2,9 @@ node_modules
 out
 *.vsix
 .vscode-test
+.vscode
+*.log
 .memory
 .DS_Store
+bun.lockb
+bun.lock

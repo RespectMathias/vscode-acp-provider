@@ -214,14 +214,14 @@
     ]
   },
   "scripts": {
-    "clean": "rm -rf ./out",
-    "build": "bun run clean && bun run compile",
-    "compile": "tsc -p ./",
-    "watch": "tsc -watch -p ./",
+    "clean": "bun -e \"require('fs').rmSync('./out', { recursive: true, force: true })\"",
+    "typecheck": "bunx tsc -p ./ --noEmit",
+    "compile": "bun run typecheck && bunx esbuild src/extension.ts --bundle --outfile=out/extension.js --external:vscode --format=cjs --platform=node --sourcemap --minify",
+    "watch": "bunx esbuild src/extension.ts --bundle --outfile=out/extension.js --external:vscode --format=cjs --platform=node --sourcemap --watch",
     "pretest": "bun run compile",
     "lint": "bunx prettier . --check",
     "format": "bunx prettier . --write",
-    "package": "bun run build && vsce package --allow-star-activation --no-dependencies",
+    "package": "bun run clean && bun run compile && bunx vsce package --no-dependencies --skip-license",
     "install-dts": "bunx @vscode/dts dev"
   },
   "devDependencies": {
