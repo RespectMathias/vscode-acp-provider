@@ -167,6 +167,30 @@ class SessionManager extends DisposableBase implements AcpSessionManager {
   private activeSessions: Map<string, Session> = new Map();
   private sessionAliases: Map<string, string> = new Map();
 
+  private getSupportedModelIds(): Set<string> | undefined {
+    const models = this.client.getSupportedModelState();
+    if (!models || models.availableModels.length === 0) {
+      return undefined;
+    }
+    return new Set(models.availableModels.map((model) => model.modelId));
+  }
+
+  private async persistSessionModel(session: Session): Promise<void> {
+    try {
+      await this.sessionStore.updateSessionModel(
+        this.agent.id,
+        session.acpSessionId,
+        session.cwd,
+        session.options.modelId,
+      );
+    } catch (error) {
+      const message = error instanceof Error ? error.message : String(error);
+      this.logger.warn(
+        `Failed to persist session model for ${session.acpSessionId}: ${message}`,
+      );
+    }
+  }
+
   private createSessionUri(sessionId: string): vscode.Uri {
     return createSessionUri(this.agent.id, sessionId);
   }
@@ -286,6 +310,33 @@ class SessionManager extends DisposableBase implements AcpSessionManager {
           },
           existingSession.cwd,
         );
+
+          const supportedModelIds = this.getSupportedModelIds();
+          const persistedModelId = existingSession.modelId;
+          const isModelSupported = supportedModelIds
+            ? !!persistedModelId && supportedModelIds.has(persistedModelId)
+            : true;
+          if (
+            persistedModelId &&
+            isModelSupported &&
+            persistedModelId !== session.options.modelId
+          ) {
+            try {
+              await this.client.changeModel(
+                session.acpSessionId,
+                persistedModelId,
+              );
+              session.setModelId(persistedModelId);
+              await this.persistSessionModel(session);
+            } catch (error) {
+              const message =
+                error instanceof Error ? error.message : String(error);
+              this.logger.warn(
+                `Failed to restore model for ${session.acpSessionId}: ${message}`,
+              );
+            }
+          }
+
         this.activeSessions.set(decodedResource.sessionId, session);
 
         const turnBuilder = new TurnBuilder(this.agent.id);
@@ -400,6 +451,7 @@ class SessionManager extends DisposableBase implements AcpSessionManager {
       }
       if (update.optionId === VscodeSessionOptions.Model) {
         session.setModelId(update.value);
+        void this.persistSessionModel(session);
       }
     }
 

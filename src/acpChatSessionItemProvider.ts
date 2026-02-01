@@ -55,6 +55,7 @@ class AcpChatSessionItemProvider
             cwd: modified.cwd,
             title: modified.title,
             updatedAt: modified.updatedAt,
+            modelId: modified.options.modelId,
           })
           .then(() => this._onDidChangeChatSessionItems.fire());
 

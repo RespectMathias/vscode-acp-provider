@@ -205,7 +205,7 @@ class AcpClientImpl extends DisposableBase implements AcpClient {
     let timeoutId: NodeJS.Timeout | null = null;
     const timeoutPromise = new Promise<never>((_, reject) => {
       timeoutId = setTimeout(() => {
-        reject(new Error(`session/new timed out after ${timeoutMs / 1000}s. Check the ACP Client output for opencode errors.`));
+        reject(new Error(`session/new timed out after ${timeoutMs / 1000}s. Check the ACP Client output channel for errors from the current agent.`));
       }, timeoutMs);
     });
 

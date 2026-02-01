@@ -9,12 +9,19 @@ export type DiskSession = {
   cwd: string;
   title: string;
   updatedAt: number;
+  modelId?: string;
 };
 
 export interface SessionStore extends vscode.Disposable {
   onDataChanged: vscode.Event<void>;
   listSessions(agent: AgentType, cwd: string): Promise<DiskSession[]>;
   upsertSession(agent: AgentType, info: DiskSession): Promise<void>;
+  updateSessionModel(
+    agent: AgentType,
+    sessionId: string,
+    cwd: string,
+    modelId: string,
+  ): Promise<void>;
   deleteSession(agent: AgentType, sessionId: string): Promise<void>;
   deleteAllSessions(cwd: string): Promise<void>;
 }
@@ -25,14 +32,12 @@ type DiskSessionRecord = {
   cwd: string;
   title: string;
   updated_at: number;
+  model_id?: string;
 };
 
 type SessionStoreData = {
-  version: 1;
   sessions: DiskSessionRecord[];
 };
-
-const STORE_VERSION: SessionStoreData["version"] = 1;
 
 function getAcpStorePath(context: vscode.ExtensionContext): string {
   const acpDir = path.join(context.globalStorageUri.fsPath, ".acp");
@@ -75,6 +80,7 @@ class FileSessionStore implements SessionStore {
         cwd: session.cwd,
         title: session.title,
         updatedAt: session.updated_at,
+        modelId: session.model_id,
       }));
   }
 
@@ -88,6 +94,7 @@ class FileSessionStore implements SessionStore {
       existing.cwd = info.cwd;
       existing.title = info.title;
       existing.updated_at = info.updatedAt;
+      existing.model_id = info.modelId;
     } else {
       store.sessions.push({
         agent_type: agent,
@@ -95,9 +102,30 @@ class FileSessionStore implements SessionStore {
         cwd: info.cwd,
         title: info.title,
         updated_at: info.updatedAt,
+        model_id: info.modelId,
       });
     }
 
+    await this.persistStore(store);
+  }
+
+  async updateSessionModel(
+    agent: AgentType,
+    sessionId: string,
+    cwd: string,
+    modelId: string,
+  ): Promise<void> {
+    const store = await this.readStore();
+    const existing = store.sessions.find(
+      (session) =>
+        session.agent_type === agent &&
+        session.session_id === sessionId &&
+        session.cwd === cwd,
+    );
+    if (!existing) {
+      return;
+    }
+    existing.model_id = modelId;
     await this.persistStore(store);
   }
 
@@ -134,21 +162,17 @@ class FileSessionStore implements SessionStore {
     try {
       const raw = await fs.promises.readFile(this.storePath, "utf8");
       const parsed = JSON.parse(raw) as SessionStoreData;
-      if (!parsed || parsed.version !== STORE_VERSION) {
-        return { version: STORE_VERSION, sessions: [] };
-      }
       return {
-        version: STORE_VERSION,
         sessions: Array.isArray(parsed.sessions) ? parsed.sessions : [],
       };
     } catch (error) {
       if ((error as NodeJS.ErrnoException).code === "ENOENT") {
-        return { version: STORE_VERSION, sessions: [] };
+        return { sessions: [] };
       }
       this.logger.warn(
         `Failed to read ACP session store: ${error instanceof Error ? error.message : String(error)}`,
       );
-      return { version: STORE_VERSION, sessions: [] };
+      return { sessions: [] };
     }
   }
 
