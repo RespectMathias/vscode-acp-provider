@@ -2,29 +2,28 @@
 import vscode, { ChatSessionStatus } from "vscode";
 import { AcpSessionManager } from "./acpSessionManager";
 import { DisposableBase } from "./disposables";
-import { SessionDb } from "./acpSessionDb";
+import { SessionStore } from "./acpSessionStore";
 
 export function createAcpChatSessionItemProvider(
   sessionManager: AcpSessionManager,
-  sessionDb: SessionDb,
+  sessionStore: SessionStore,
   logger: vscode.LogOutputChannel,
 ): vscode.ChatSessionItemProvider & vscode.Disposable {
-  return new AcpChatSessionItemProvider(sessionManager, sessionDb, logger);
+  return new AcpChatSessionItemProvider(sessionManager, sessionStore, logger);
 }
 
 class AcpChatSessionItemProvider
   extends DisposableBase
-  implements vscode.ChatSessionItemProvider
-{
+  implements vscode.ChatSessionItemProvider {
   constructor(
     private readonly sessionManager: AcpSessionManager,
-    private readonly sessionDb: SessionDb,
+    private readonly sessionStore: SessionStore,
     private readonly logger: vscode.LogOutputChannel,
   ) {
     super();
 
     this._register(
-      this.sessionDb.onDataChanged(() => {
+      this.sessionStore.onDataChanged(() => {
         this._onDidChangeChatSessionItems.fire();
       }),
     );
@@ -50,12 +49,13 @@ class AcpChatSessionItemProvider
           return;
         }
 
-        this.sessionDb
+        this.sessionStore
           .upsertSession(original.agent.id, {
             sessionId: modified.acpSessionId,
             cwd: modified.cwd,
             title: modified.title,
             updatedAt: modified.updatedAt,
+            modelId: modified.options.modelId,
           })
           .then(() => this._onDidChangeChatSessionItems.fire());
 

@@ -137,9 +137,11 @@ export class AcpChatParticipant extends DisposableBase {
       }
 
       session.markAsCompleted();
-      if (context.chatSessionContext.isUntitled) {
+      if (session.title.startsWith("Session [") || context.chatSessionContext.isUntitled) {
+        const truncated = request.prompt.substring(0, 45);
+        const lastSpace = truncated.lastIndexOf(" ");
         session.title =
-          request.prompt.substring(0, Math.min(request.prompt.length, 50)) ||
+          (lastSpace > 0 ? truncated.substring(0, lastSpace) : truncated) ||
           session.title;
       }
       this.sessionManager.syncSessionState(sessionResource, session);

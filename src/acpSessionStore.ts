@@ -9,12 +9,19 @@ export type DiskSession = {
   cwd: string;
   title: string;
   updatedAt: number;
+  modelId?: string;
 };
 
-export interface SessionDb extends vscode.Disposable {
+export interface SessionStore extends vscode.Disposable {
   onDataChanged: vscode.Event<void>;
   listSessions(agent: AgentType, cwd: string): Promise<DiskSession[]>;
   upsertSession(agent: AgentType, info: DiskSession): Promise<void>;
+  updateSessionModel(
+    agent: AgentType,
+    sessionId: string,
+    cwd: string,
+    modelId: string,
+  ): Promise<void>;
   deleteSession(agent: AgentType, sessionId: string): Promise<void>;
   deleteAllSessions(cwd: string): Promise<void>;
 }
@@ -25,14 +32,12 @@ type DiskSessionRecord = {
   cwd: string;
   title: string;
   updated_at: number;
+  model_id?: string;
 };
 
-type SessionStore = {
-  version: 1;
+type SessionStoreData = {
   sessions: DiskSessionRecord[];
 };
-
-const STORE_VERSION: SessionStore["version"] = 1;
 
 function getAcpStorePath(context: vscode.ExtensionContext): string {
   const acpDir = path.join(context.globalStorageUri.fsPath, ".acp");
@@ -42,14 +47,14 @@ function getAcpStorePath(context: vscode.ExtensionContext): string {
   return path.join(acpDir, "acp-sessions.json");
 }
 
-const createSessionDb = (
+const createSessionStore = (
   context: vscode.ExtensionContext,
   logger: vscode.LogOutputChannel,
-): SessionDb => {
-  return new FileSessionDb(context, logger);
+): SessionStore => {
+  return new FileSessionStore(context, logger);
 };
 
-class FileSessionDb implements SessionDb {
+class FileSessionStore implements SessionStore {
   private readonly storePath: string;
 
   constructor(
@@ -75,6 +80,7 @@ class FileSessionDb implements SessionDb {
         cwd: session.cwd,
         title: session.title,
         updatedAt: session.updated_at,
+        modelId: session.model_id,
       }));
   }
 
@@ -88,6 +94,7 @@ class FileSessionDb implements SessionDb {
       existing.cwd = info.cwd;
       existing.title = info.title;
       existing.updated_at = info.updatedAt;
+      existing.model_id = info.modelId;
     } else {
       store.sessions.push({
         agent_type: agent,
@@ -95,9 +102,30 @@ class FileSessionDb implements SessionDb {
         cwd: info.cwd,
         title: info.title,
         updated_at: info.updatedAt,
+        model_id: info.modelId,
       });
     }
 
+    await this.persistStore(store);
+  }
+
+  async updateSessionModel(
+    agent: AgentType,
+    sessionId: string,
+    cwd: string,
+    modelId: string,
+  ): Promise<void> {
+    const store = await this.readStore();
+    const existing = store.sessions.find(
+      (session) =>
+        session.agent_type === agent &&
+        session.session_id === sessionId &&
+        session.cwd === cwd,
+    );
+    if (!existing) {
+      return;
+    }
+    existing.model_id = modelId;
     await this.persistStore(store);
   }
 
@@ -130,30 +158,26 @@ class FileSessionDb implements SessionDb {
     this._onDataChanged.dispose();
   }
 
-  private async readStore(): Promise<SessionStore> {
+  private async readStore(): Promise<SessionStoreData> {
     try {
       const raw = await fs.promises.readFile(this.storePath, "utf8");
-      const parsed = JSON.parse(raw) as SessionStore;
-      if (!parsed || parsed.version !== STORE_VERSION) {
-        return { version: STORE_VERSION, sessions: [] };
-      }
+      const parsed = JSON.parse(raw) as SessionStoreData;
       return {
-        version: STORE_VERSION,
         sessions: Array.isArray(parsed.sessions) ? parsed.sessions : [],
       };
     } catch (error) {
       if ((error as NodeJS.ErrnoException).code === "ENOENT") {
-        return { version: STORE_VERSION, sessions: [] };
+        return { sessions: [] };
       }
       this.logger.warn(
         `Failed to read ACP session store: ${error instanceof Error ? error.message : String(error)}`,
       );
-      return { version: STORE_VERSION, sessions: [] };
+      return { sessions: [] };
     }
   }
 
   private async persistStore(
-    store: SessionStore,
+    store: SessionStoreData,
     notify: boolean = true,
   ): Promise<void> {
     const tempPath = `${this.storePath}.tmp`;
@@ -178,4 +202,4 @@ class FileSessionDb implements SessionDb {
   }
 }
 
-export { createSessionDb };
+export { createSessionStore };

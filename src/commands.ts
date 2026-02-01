@@ -1,11 +1,11 @@
 import * as vscode from "vscode";
-import { SessionDb } from "./acpSessionDb";
+import { SessionStore } from "./acpSessionStore";
 import { getWorkspaceCwd } from "./permittedPaths";
 
 export function registerCommands(
   context: vscode.ExtensionContext,
   dependencies: {
-    sessionDb: SessionDb;
+    sessionStore: SessionStore;
   },
   outputChannel: vscode.LogOutputChannel,
 ) {
@@ -19,7 +19,7 @@ export function registerCommands(
           );
           return;
         }
-        await dependencies.sessionDb.deleteAllSessions(cwd);
+        await dependencies.sessionStore.deleteAllSessions(cwd);
         vscode.window.showInformationMessage(
           "All ACP sessions have been cleared.",
         );
