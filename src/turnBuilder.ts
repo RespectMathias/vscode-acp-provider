@@ -120,6 +120,14 @@ export class TurnBuilder {
       return;
     }
 
+    // Skip internal metadata blocks added by VS Code (not user-visible content)
+    if (
+      text.startsWith("Reference (") ||
+      text.startsWith("Tool reference (")
+    ) {
+      return;
+    }
+
     const normalized = text.startsWith("User:")
       ? text.replace(/^User:\s*/, "")
       : text;
@@ -161,12 +169,24 @@ export class TurnBuilder {
     if (update.status !== "completed" && update.status !== "failed") {
       return;
     }
-    const part = this.toolCallParts.get(update.toolCallId);
-    if (!part) {
-      return;
-    }
 
     const info = getToolInfo(update);
+
+    // Create tool invocation part on-demand if not present (replay scenario).
+    // During history replay, agents may send tool_call_update without a prior
+    // tool_call notification. We synthesize the part here so diffs render.
+    let part = this.toolCallParts.get(update.toolCallId);
+    if (!part) {
+      part = new vscode.ChatToolInvocationPart(
+        info.name || update.title || "Tool",
+        update.toolCallId,
+        false,
+      );
+      part.invocationMessage = info.input ?? "";
+      this.toolCallParts.set(update.toolCallId, part);
+      this.currentAgentParts.push(part);
+    }
+
     part.isConfirmed = update.status === "completed";
     part.isError = update.status === "failed" || undefined;
     part.isComplete = true;
