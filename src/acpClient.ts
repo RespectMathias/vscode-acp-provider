@@ -137,6 +137,8 @@ class AcpClientImpl extends DisposableBase implements AcpClient {
   private readonly allowedWriteSessions = new Set<string>();
   private readonly allowedTerminalSessions = new Set<string>();
   private permissionPromptCounter = 0;
+  private agentExitPromise: Promise<never> | null = null;
+  private agentExitReject: ((error: Error) => void) | null = null;
 
   private readonly onSessionUpdateEmitter = this._register(
     new vscode.EventEmitter<SessionNotification>(),
@@ -197,8 +199,33 @@ class AcpClientImpl extends DisposableBase implements AcpClient {
       cwd,
       mcpServers: serializeMcpServers(mcpServers),
     };
-    const response: NewSessionResponse =
-      await this.connection.newSession(request);
+    
+    // Add 10 second timeout for faster failure feedback
+    const timeoutMs = 10_000;
+    let timeoutId: NodeJS.Timeout | null = null;
+    const timeoutPromise = new Promise<never>((_, reject) => {
+      timeoutId = setTimeout(() => {
+        reject(new Error(`session/new timed out after ${timeoutMs / 1000}s. Check the ACP Client output for opencode errors.`));
+      }, timeoutMs);
+    });
+
+    const racers: Promise<NewSessionResponse>[] = [this.connection.newSession(request), timeoutPromise];
+    if (this.agentExitPromise) {
+      racers.push(this.agentExitPromise);
+    }
+
+    let response: NewSessionResponse;
+    try {
+      response = await Promise.race(racers);
+    } catch (error) {
+      if (timeoutId) clearTimeout(timeoutId);
+      // Kill the agent and reset connection on failure so next attempt starts fresh
+      await this.stopProcess();
+      throw error;
+    } finally {
+      if (timeoutId) clearTimeout(timeoutId);
+    }
+
     this.supportedModeState = response.modes || null;
     this.supportedModelState = response.models || null;
 
@@ -664,13 +691,29 @@ class AcpClientImpl extends DisposableBase implements AcpClient {
       this.logChannel.debug(
         `agent:${this.agent.id} exited with code ${code ?? "unknown"}`,
       );
+      // Reject any pending operations when agent exits
+      if (this.agentExitReject) {
+        this.agentExitReject(new Error(`Agent process exited unexpectedly with code ${code ?? "unknown"}`));
+        this.agentExitReject = null;
+      }
+      this.connection = null;
+      this.readyPromise = null;
       this._onDidStop.fire();
     });
     agentProc.on("error", (error) => {
       this.logChannel.debug(
         `agent:${this.agent.id} failed to start: ${error instanceof Error ? error.message : String(error)}`,
       );
-      // todo: emit agent proc error upstream
+      // Reject any pending operations when agent fails to start
+      if (this.agentExitReject) {
+        this.agentExitReject(error instanceof Error ? error : new Error(String(error)));
+        this.agentExitReject = null;
+      }
+    });
+
+    // Create a promise that rejects when the agent exits
+    this.agentExitPromise = new Promise<never>((_, reject) => {
+      this.agentExitReject = reject;
     });
     this.agentProcess = agentProc;
   }
@@ -689,12 +732,32 @@ class AcpClientImpl extends DisposableBase implements AcpClient {
     const stream = ndJsonStream(stdinStream, stdoutStream);
     this.connection = new ClientSideConnection(() => this, stream);
 
-    const initResponse = await this.connection.initialize({
+    // Add 120 second timeout for initialize
+    const initTimeoutMs = 120_000;
+    const initTimeoutPromise = new Promise<never>((_, reject) => {
+      setTimeout(() => reject(new Error(`initialize timed out after ${initTimeoutMs / 1000}s`)), initTimeoutMs);
+    });
+
+    const initRacers = [
+      this.connection.initialize({
       protocolVersion: PROTOCOL_VERSION,
       clientCapabilities: CLIENT_CAPABILITIES,
       clientInfo: CLIENT_INFO,
-    });
-    this.agentCapabilities = initResponse.agentCapabilities;
+    }),
+      initTimeoutPromise,
+    ] as const;
+
+    try {
+      const initResponse = await Promise.race(
+        this.agentExitPromise
+          ? [...initRacers, this.agentExitPromise]
+          : initRacers,
+      );
+      this.agentCapabilities = initResponse.agentCapabilities;
+    } catch (error) {
+      await this.stopProcess();
+      throw error;
+    }
     this._onDidStart.fire();
   }
 

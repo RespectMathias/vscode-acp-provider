@@ -46,7 +46,21 @@ export class AcpChatSessionContentProvider
     resource: vscode.Uri,
     _token: vscode.CancellationToken,
   ): Promise<vscode.ChatSession> {
-    const response = await this.sessionManager.createOrGet(resource);
+    let response;
+    try {
+      response = await this.sessionManager.createOrGet(resource);
+    } catch (error) {
+      const message = error instanceof Error ? error.message : String(error);
+      this.logChannel.error(`Failed to create or load session: ${message}`);
+      vscode.window.showErrorMessage(`ACP session failed: ${message}`);
+      // Return an empty session with error in history so the UI isn't broken
+      const errorSession: vscode.ChatSession = {
+        history: [],
+        requestHandler: this.participant.requestHandler,
+        options: {},
+      };
+      return errorSession;
+    }
     const { session: acpSession, history } = response;
 
     this.logChannel.debug(
